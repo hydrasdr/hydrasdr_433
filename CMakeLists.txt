@@ -1,5 +1,11 @@
 ########################################################################
-# Project setup
+# hydrasdr_433 - RF signal decoder for HydraSDR
+#
+# Based on rtl_433 by merbanan and contributors
+# https://github.com/merbanan/rtl_433
+#
+# HydraSDR adaptation with native CF32 (float32 IQ) support
+# for high-precision signal processing.
 ########################################################################
 cmake_minimum_required(VERSION 2.6...3.10)
 # Fix behavior of CMAKE_C_STANDARD when targeting macOS.
@@ -11,7 +17,7 @@ if(POLICY CMP0054)
     cmake_policy(SET CMP0054 NEW)
 endif()
 
-project(rtl433 C)
+project(hydrasdr433 C)
 
 #select the release build type by default to get optimization flags
 if(NOT CMAKE_BUILD_TYPE)
@@ -33,6 +39,12 @@ if(GIT_COMMIT) # is a git repo
     # use lightweight (non-annotated) tags
     git_describe(GIT_VERSION "--tags" "--exclude=nightly")
     git_timestamp(GIT_TIMESTAMP)
+    # check if git describe failed (no tags found) - fallback to short commit hash
+    if(GIT_VERSION MATCHES "NOTFOUND")
+        string(SUBSTRING "${GIT_COMMIT}" 0 8 GIT_SHORT_COMMIT)
+        set(GIT_VERSION "0.0.0-g${GIT_SHORT_COMMIT}")
+        message(STATUS "No git tags found, using commit hash for version")
+    endif()
     message(STATUS "Found Git version: ${GIT_REFSPEC} commit ${GIT_COMMIT} from ${GIT_TIMESTAMP_ISO}")
     message(STATUS "Using Git version tag: ${GIT_VERSION} on ${GIT_BRANCH} at ${GIT_TIMESTAMP}")
     ADD_DEFINITIONS(-DGIT_VERSION=${GIT_VERSION})
@@ -115,11 +127,15 @@ if(MSVC)
     add_compile_options("/wd4244")
     add_compile_options("/wd4267")
     add_compile_options("/wd4305")
+    # Use static MSVC runtime by default for standalone executables
+    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>" CACHE STRING "MSVC runtime library")
 endif()
 
-# Fix printf %zu
+# Fix printf %zu and use static runtime for MinGW
 if(MINGW)
     add_definitions(-D__USE_MINGW_ANSI_STDIO)
+    # Use static GCC runtime for standalone executables (no libgcc/libstdc++ DLLs needed)
+    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -static-libgcc")
 endif()
 
 # Make sure we get M_PI
@@ -218,60 +234,82 @@ else()
 endif()
 
 ########################################################################
-# Find LibRTLSDR build dependencies
+# HydraSDR-only build (RTL-SDR and SoapySDR removed)
+# This is a dedicated HydraSDR fork of rtl_433.
+# For original rtl_433 with RTL-SDR/SoapySDR support, see:
+# https://github.com/merbanan/rtl_433
 ########################################################################
-set(ENABLE_RTLSDR ON CACHE STRING "Enable RTL-SDR (lbrtlsdr) driver support")
-set_property(CACHE ENABLE_RTLSDR PROPERTY STRINGS AUTO ON OFF)
-if(ENABLE_RTLSDR) # AUTO / ON
-
-find_package(LibRTLSDR)
-find_package(LibUSB)
-if(LibRTLSDR_FOUND)
-    message(STATUS "RTL-SDR device input will be compiled. Found version ${LibRTLSDR_VERSION}")
-    include_directories(${LibRTLSDR_INCLUDE_DIRS})
-    list(APPEND SDR_LIBRARIES ${LibRTLSDR_LIBRARIES})
-    ADD_DEFINITIONS(-DRTLSDR)
-
-if(LibUSB_FOUND)
-    message(STATUS "libusb-1.0 error messages are available. Found version ${LibUSB_VERSION}")
-    include_directories(${LibUSB_INCLUDE_DIRS})
-    list(APPEND SDR_LIBRARIES ${LibUSB_LIBRARIES})
-    ADD_DEFINITIONS(-DLIBUSB1)
-else()
-    message(STATUS "libusb-1.0 error messages are not available.")
-endif()
-
-elseif(ENABLE_RTLSDR STREQUAL "AUTO")
-    message(STATUS "RTL-SDR development files not found, RTL-SDR device input won't be possible.")
-else()
-    message(FATAL_ERROR "RTL-SDR development files not found.")
-endif()
-
-else()
-    message(STATUS "RTL-SDR device input disabled.")
-endif()
 
 ########################################################################
-# Find SoapySDR build dependencies
+# Find HydraSDR build dependencies
 ########################################################################
-set(ENABLE_SOAPYSDR AUTO CACHE STRING "Enable SoapySDR driver support")
-set_property(CACHE ENABLE_SOAPYSDR PROPERTY STRINGS AUTO ON OFF)
-if(ENABLE_SOAPYSDR) # AUTO / ON
+set(ENABLE_HYDRASDR ON CACHE STRING "Enable HydraSDR driver support")
+set_property(CACHE ENABLE_HYDRASDR PROPERTY STRINGS ON OFF)
+set(HYDRASDR_DIR "" CACHE PATH "Path to HydraSDR installation or source directory")
+set(HYDRASDR_FETCH_FROM_GIT ON CACHE BOOL "Fetch HydraSDR from GitHub if not found locally")
+if(ENABLE_HYDRASDR) # AUTO / ON
 
-find_package(SoapySDR "0.6" NO_MODULE)
-if(SoapySDR_FOUND)
-    message(STATUS "SoapySDR device input will be compiled. Found version ${SoapySDR_VERSION}")
-    include_directories(${SoapySDR_INCLUDE_DIRS})
-    list(APPEND SDR_LIBRARIES ${SoapySDR_LIBRARIES})
-    ADD_DEFINITIONS(-DSOAPYSDR)
-elseif(ENABLE_SOAPYSDR STREQUAL "AUTO")
-    message(STATUS "SoapySDR development files not found, SoapySDR device input won't be possible.")
+find_package(HydraSDR)
+
+# If not found locally, fetch from GitHub and build as subproject
+if(NOT HydraSDR_FOUND)
+    if(HYDRASDR_FETCH_FROM_GIT OR ENABLE_HYDRASDR STREQUAL "ON")
+        message(STATUS "HydraSDR not found locally, fetching from GitHub...")
+        include(FetchContent)
+        FetchContent_Declare(
+            hydrasdr_host
+            GIT_REPOSITORY https://github.com/hydrasdr/hydrasdr-host.git
+            GIT_TAG        main
+            GIT_SHALLOW    TRUE
+        )
+
+        # Configure HydraSDR build options
+        set(BUILD_SHARED_LIBS ON CACHE BOOL "Build shared libraries" FORCE)
+        set(BUILD_HYDRASDR_TOOLS OFF CACHE BOOL "Build HydraSDR tools" FORCE)
+
+        FetchContent_MakeAvailable(hydrasdr_host)
+
+        # After FetchContent, the library target 'hydrasdr' should be available
+        if(TARGET hydrasdr)
+            message(STATUS "HydraSDR fetched and building as subproject")
+            # Get include directory from the fetched source
+            set(HydraSDR_INCLUDE_DIRS ${hydrasdr_host_SOURCE_DIR}/libhydrasdr/src)
+            include_directories(${HydraSDR_INCLUDE_DIRS})
+            # Link against the hydrasdr target directly
+            list(APPEND SDR_LIBRARIES hydrasdr)
+            ADD_DEFINITIONS(-DHYDRASDR)
+            set(HydraSDR_FOUND TRUE)
+            # Set DLL directory for Windows
+            if(WIN32)
+                set(HydraSDR_DLL_DIR $<TARGET_FILE_DIR:hydrasdr> CACHE PATH "Directory containing HydraSDR DLLs" FORCE)
+            endif()
+        else()
+            message(WARNING "HydraSDR fetch succeeded but target 'hydrasdr' not found")
+        endif()
+    endif()
+endif()
+
+if(HydraSDR_FOUND)
+    if(HydraSDR_VERSION)
+        message(STATUS "HydraSDR device input will be compiled. Found version ${HydraSDR_VERSION}")
+    else()
+        message(STATUS "HydraSDR device input will be compiled (built from source)")
+    endif()
+    if(NOT TARGET hydrasdr)
+        # Only add these if using pre-built library (not FetchContent target)
+        include_directories(${HydraSDR_INCLUDE_DIRS})
+        list(APPEND SDR_LIBRARIES ${HydraSDR_LIBRARIES})
+        ADD_DEFINITIONS(-DHYDRASDR)
+    endif()
+elseif(ENABLE_HYDRASDR STREQUAL "AUTO")
+    message(STATUS "HydraSDR development files not found, HydraSDR device input won't be possible.")
+    message(STATUS "  Hint: Set -DHYDRASDR_FETCH_FROM_GIT=ON to automatically fetch and build from GitHub")
 else()
-    message(FATAL_ERROR "SoapySDR development files not found.")
+    message(FATAL_ERROR "HydraSDR development files not found.")
 endif()
 
 else()
-    message(STATUS "SoapySDR device input disabled.")
+    message(STATUS "HydraSDR device input disabled.")
 endif()
 
 ########################################################################
@@ -305,16 +343,18 @@ include_directories(
 )
 
 ########################################################################
-# Create uninstall target
+# Create uninstall target (if not already defined by a subproject)
 ########################################################################
-configure_file(
-    ${PROJECT_SOURCE_DIR}/cmake/cmake_uninstall.cmake.in
-    ${CMAKE_CURRENT_BINARY_DIR}/cmake_uninstall.cmake
-@ONLY)
+if(NOT TARGET uninstall)
+    configure_file(
+        ${PROJECT_SOURCE_DIR}/cmake/cmake_uninstall.cmake.in
+        ${CMAKE_CURRENT_BINARY_DIR}/cmake_uninstall.cmake
+    @ONLY)
 
-add_custom_target(uninstall
-    ${CMAKE_COMMAND} -P ${CMAKE_CURRENT_BINARY_DIR}/cmake_uninstall.cmake
-)
+    add_custom_target(uninstall
+        ${CMAKE_COMMAND} -P ${CMAKE_CURRENT_BINARY_DIR}/cmake_uninstall.cmake
+    )
+endif()
 
 ########################################################################
 # Build documentation with Doxygen
@@ -362,6 +402,9 @@ include(CTest) # note: this adds a BUILD_TESTING which defaults to ON
 ########################################################################
 # Add subdirectories
 ########################################################################
+# hydrasdr-lfft library (light FFT for small sizes 2-32 points)
+add_subdirectory(external/hydrasdr-lfft)
+
 add_subdirectory(include)
 add_subdirectory(src)
 if(BUILD_TESTING)

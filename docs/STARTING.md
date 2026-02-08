@@ -31,15 +31,15 @@ You can also use a configuration file to give the same options.
 Files will be read in order and options given will also override in that order.
 Configuration files can be mixed with command line options.
 
-You can instruct `rtl_433` to read a configuration file with the `-c <path>` option.
+You can instruct `hydrasdr_433` to read a configuration file with the `-c <path>` option.
 
 By default a configuration file will be searched for and loaded from
-- `rtl_433.conf` at the current directory
-- `$HOME/.config/rtl_433/rtl_433.conf`
-- `/usr/local/etc/rtl_433/rtl_433.conf`
-- `/etc/rtl_433/rtl_433.conf`
+- `hydrasdr_433.conf` at the current directory
+- `$HOME/.config/hydrasdr_433/hydrasdr_433.conf`
+- `/usr/local/etc/hydrasdr_433/hydrasdr_433.conf`
+- `/etc/hydrasdr_433/hydrasdr_433.conf`
 
-An example configuration file with information on all possible options is provided at [rtl_433.example.conf](https://github.com/merbanan/rtl_433/blob/master/conf/rtl_433.example.conf).
+An example configuration file with information on all possible options is provided at [hydrasdr_433.example.conf](../conf/hydrasdr_433.example.conf).
 
 ::: tip
     [-c <path>] Read config options from a file
@@ -100,6 +100,36 @@ and even `-t <settings>` to apply a list of keyword=value settings for SoapySDR 
     [-t <settings>] apply a list of keyword=value settings for SoapySDR devices
          e.g. -t "antenna=A,bandwidth=4.5M,rfnotch_ctrl=false"
     [-p <ppm_error>] Correct rtl-sdr tuner frequency offset error (default: 0)
+:::
+
+## Wideband scanning (HydraSDR)
+
+HydraSDR supports wideband scanning mode with the `-B` option. Use wideband when the ISM band is wider than single-frequency capture can cover.
+
+**When to use wideband vs single-frequency:**
+
+| Band | ISM Width | Single-freq | Wideband needed? |
+|------|-----------|-------------|------------------|
+| 433 MHz | 1.74 MHz | 250 kHz | **Yes** - use `-B 433.92M:2M:8` |
+| 868 MHz | 600 kHz | 1 MHz | No - use `-f 868.5M` |
+| 915 MHz | 26 MHz | 1 MHz | **Yes** - use `-B 915M:8M:16` |
+
+**Syntax:** `-B <center>:<bandwidth>[:<channels>]`
+
+**Examples:**
+```bash
+# EU 433 MHz - wideband needed (band 1.74 MHz > single-freq 250 kHz)
+hydrasdr_433 -B 433.92M:2M:8 -v -M level
+
+# EU 868 MHz SRD - single-freq sufficient (band 600 kHz < single-freq 1 MHz)
+hydrasdr_433 -f 868.5M -v -M level
+
+# US 915 MHz - wideband needed (band 26 MHz >> single-freq 1 MHz)
+hydrasdr_433 -B 915M:8M:16 -v -M level
+```
+
+::: tip
+    [-B <center>:<bandwidth>[:<channels>]] Wideband scanning mode (HydraSDR only)
 :::
 
 ## Verbose output

@@ -43,7 +43,7 @@ void r_logger_set_log_handler(r_logger_handler const handler, void *userdata);
 /** Log a message string.
 
     @param level a log level
-    @param src the log source, typically the function name ("__func__") or a module ("SoapySDR")
+    @param src the log source, typically the function name ("__func__") or a module ("HydraSDR")
     @param msg a log message
 */
 void print_log(log_level_t level, char const *src, char const *msg);
@@ -53,7 +53,7 @@ void print_log(log_level_t level, char const *src, char const *msg);
     Be terse, messages should be shorter than 100 and a maximum length of 200 characters.
 
     @param level a log level
-    @param src the log source, typically the function name ("__func__") or a module ("SoapySDR")
+    @param src the log source, typically the function name ("__func__") or a module ("HydraSDR")
     @param fmt a log message format string
 */
 void print_logf(log_level_t level, char const *src, _Printf_format_string_ char const *fmt, ...)

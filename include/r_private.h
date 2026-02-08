@@ -15,6 +15,7 @@
 #include "am_analyze.h"
 #include "rtl_433.h"
 #include "compat_time.h"
+#include "cf32_resampler.h"
 
 struct dm_state {
     float auto_level;
@@ -59,6 +60,29 @@ struct dm_state {
     unsigned frame_end_ago;
     struct timeval now;
     float sample_file_pos;
+
+    /*
+     * Per-channel state for wideband mode.
+     * These fields are grouped here rather than in a separate struct
+     * to avoid an extra indirection level and to keep dm_state as the
+     * single owner of all demodulator state (matching upstream r_private.h).
+     */
+    int wideband_channels_allocated;                        ///< Number of channels allocated
+    pulse_detect_t **wb_pulse_detect;                       ///< Per-channel pulse detectors
+    filter_state_t *wb_lowpass_filter_state;                ///< Per-channel lowpass filter states
+    demodfm_state_t *wb_demod_FM_state;                     ///< Per-channel FM demod states
+    float *wb_noise_level;                                  ///< Per-channel noise levels (dB)
+    float *wb_min_level_auto;                               ///< Per-channel auto min levels (dB)
+    cf32_resampler_t *wb_resamplers;                        ///< Per-channel resamplers (channel_rate -> target_rate)
+    uint32_t wb_target_rate;                                ///< Target sample rate after resampling (e.g., 250000)
+    pulse_data_t *wb_pulse_data;                            ///< Per-channel OOK pulse data
+    pulse_data_t *wb_fsk_pulse_data;                        ///< Per-channel FSK pulse data
+
+    /* Per-channel scratch buffers (isolate channels from shared demod buffers) */
+    int16_t *wb_am_bufs;                                    ///< Per-channel AM demod buffers [ch * wb_buf_len]
+    int16_t *wb_fm_bufs;                                    ///< Per-channel FM demod buffers [ch * wb_buf_len]
+    uint16_t *wb_temp_bufs;                                 ///< Per-channel temp/magnitude buffers [ch * wb_buf_len]
+    size_t wb_buf_len;                                      ///< Per-channel buffer length (samples)
 };
 
 #endif /* INCLUDE_R_PRIVATE_H_ */

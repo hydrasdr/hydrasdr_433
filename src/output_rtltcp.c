@@ -381,6 +381,15 @@ static THREAD_RETURN THREAD_CALL accept_thread(void *arg)
     return 0;
 }
 
+/* Disable GCC analyzer false positives for Windows socket code.
+   The analyzer doesn't understand that INVALID_SOCKET is the only failure
+   value on Windows (where SOCKET is an unsigned type). */
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wanalyzer-fd-leak"
+#pragma GCC diagnostic ignored "-Wanalyzer-fd-use-without-check"
+#endif
+
 static int rtltcp_server_start(rtltcp_server_t *srv, char const *host, char const *port, r_cfg_t *cfg, struct raw_output *output)
 {
     if (!host || !port)
@@ -402,7 +411,7 @@ static int rtltcp_server_start(rtltcp_server_t *srv, char const *host, char cons
     sock = INVALID_SOCKET;
     for (res = res0; res; res = res->ai_next) {
         sock = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
-        if (sock >= 0) {
+        if (sock != INVALID_SOCKET) {
             memset(&srv->addr, 0, sizeof(srv->addr));
             memcpy(&srv->addr, res->ai_addr, res->ai_addrlen);
             srv->addr_len = res->ai_addrlen;
@@ -458,6 +467,10 @@ static int rtltcp_server_start(rtltcp_server_t *srv, char const *host, char cons
 
     return r;
 }
+
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
 
 static int rtltcp_server_stop(rtltcp_server_t *srv)
 {

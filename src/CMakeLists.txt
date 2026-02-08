@@ -10,6 +10,8 @@ add_library(r_433 STATIC
     baseband.c
     bit_util.c
     bitbuffer.c
+    cf32_resampler.c
+    channelizer.c
     compat_paths.c
     compat_time.c
     confparse.c
@@ -305,8 +307,12 @@ if("${CMAKE_C_COMPILER_ID}" STREQUAL "GNU" OR "${CMAKE_C_COMPILER_ID}" MATCHES "
     set_source_files_properties(mongoose.c PROPERTIES COMPILE_FLAGS "-w")
 endif()
 
-add_executable(rtl_433 rtl_433.c)
-target_link_libraries(rtl_433 r_433)
+# Link r_433 with hydrasdr_lfft for channelizer FFT operations
+target_link_libraries(r_433 hydrasdr_lfft)
+target_include_directories(r_433 PUBLIC ${PROJECT_SOURCE_DIR}/external/hydrasdr-lfft)
+
+add_executable(hydrasdr_433 hydrasdr_433.c)
+target_link_libraries(hydrasdr_433 r_433)
 
 # target_compile_definitions was only added with CMake 2.8.11
 if(THREADS_HAVE_PTHREAD_ARG)
@@ -314,29 +320,87 @@ if(THREADS_HAVE_PTHREAD_ARG)
     set_target_properties(r_433 PROPERTIES INTERFACE_COMPILE_OPTIONS "-pthread")
 endif()
 if(CMAKE_THREAD_LIBS_INIT)
-    target_link_libraries(rtl_433 "${CMAKE_THREAD_LIBS_INIT}")
+    target_link_libraries(hydrasdr_433 "${CMAKE_THREAD_LIBS_INIT}")
 endif()
 
 if(MSVC)
     # needs CMake 3.1 but Windows builds should have that
-    target_sources(rtl_433 PRIVATE getopt/getopt.c)
+    target_sources(hydrasdr_433 PRIVATE getopt/getopt.c)
 endif()
 
 add_library(data data.c abuf.c)
 target_link_libraries(data ${NET_LIBRARIES})
 
-target_link_libraries(rtl_433
+target_link_libraries(hydrasdr_433
     ${SDR_LIBRARIES}
     ${NET_LIBRARIES}
+    hydrasdr_lfft
 )
 
-set(INSTALL_TARGETS rtl_433)
+set(INSTALL_TARGETS hydrasdr_433)
 if(UNIX)
-target_link_libraries(rtl_433 m)
+target_link_libraries(hydrasdr_433 m)
 endif()
 
 # Explicitly say that we want C99
-set_target_properties(rtl_433 r_433 PROPERTIES C_STANDARD 99)
+set_target_properties(hydrasdr_433 r_433 PROPERTIES C_STANDARD 99)
+
+########################################################################
+# Copy runtime DLLs on Windows
+########################################################################
+if(WIN32)
+    # Copy OpenSSL DLLs if using OpenSSL
+    if(OPENSSL_FOUND)
+        get_filename_component(OPENSSL_BIN_DIR "${OPENSSL_CRYPTO_LIBRARY}" DIRECTORY)
+        # Try common DLL names
+        foreach(SSL_DLL libcrypto-3-x64.dll libssl-3-x64.dll libcrypto-1_1-x64.dll libssl-1_1-x64.dll)
+            if(EXISTS "${OPENSSL_BIN_DIR}/../bin/${SSL_DLL}")
+                add_custom_command(TARGET hydrasdr_433 POST_BUILD
+                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "${OPENSSL_BIN_DIR}/../bin/${SSL_DLL}"
+                    "$<TARGET_FILE_DIR:hydrasdr_433>"
+                    COMMENT "Copying ${SSL_DLL} to output directory")
+            endif()
+        endforeach()
+    endif()
+endif()
+
+########################################################################
+# Copy HydraSDR DLLs on Windows
+########################################################################
+if(WIN32 AND HydraSDR_FOUND)
+    if(TARGET hydrasdr)
+        # HydraSDR built as subproject via FetchContent - copy DLL from target
+        add_custom_command(TARGET hydrasdr_433 POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "$<TARGET_FILE:hydrasdr>"
+            "$<TARGET_FILE_DIR:hydrasdr_433>"
+            COMMENT "Copying hydrasdr DLL to output directory")
+    elseif(HydraSDR_DLL_DIR)
+        # Using pre-built HydraSDR - copy from DLL directory
+        if(EXISTS "${HydraSDR_DLL_DIR}/libhydrasdr.dll")
+            add_custom_command(TARGET hydrasdr_433 POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${HydraSDR_DLL_DIR}/libhydrasdr.dll"
+                "$<TARGET_FILE_DIR:hydrasdr_433>"
+                COMMENT "Copying libhydrasdr.dll to output directory")
+        elseif(EXISTS "${HydraSDR_DLL_DIR}/hydrasdr.dll")
+            add_custom_command(TARGET hydrasdr_433 POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${HydraSDR_DLL_DIR}/hydrasdr.dll"
+                "$<TARGET_FILE_DIR:hydrasdr_433>"
+                COMMENT "Copying hydrasdr.dll to output directory")
+        endif()
+        # Copy libusb-1.0.dll if present
+        if(EXISTS "${HydraSDR_DLL_DIR}/libusb-1.0.dll")
+            add_custom_command(TARGET hydrasdr_433 POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${HydraSDR_DLL_DIR}/libusb-1.0.dll"
+                "$<TARGET_FILE_DIR:hydrasdr_433>"
+                COMMENT "Copying libusb-1.0.dll to output directory")
+        endif()
+    endif()
+endif()
 
 ########################################################################
 # Install built library files & utilities

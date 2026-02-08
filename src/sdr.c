@@ -1,11 +1,14 @@
 /** @file
-    SDR input from RTLSDR or SoapySDR.
+    SDR input for HydraSDR with native CF32 support.
 
-    Copyright (C) 2018 Christian Zuckschwerdt
-    based on code
+    Based on rtl_433 by Christian Zuckschwerdt and contributors.
+    https://github.com/merbanan/rtl_433
+
     Copyright (C) 2012 by Steve Markgraf <steve@steve-m.de>
     Copyright (C) 2014 by Kyle Keen <keenerd@gmail.com>
     Copyright (C) 2016 by Robert X. Seger
+    Copyright (C) 2018 Christian Zuckschwerdt (original rtl_433)
+    Copyright (C) 2025-2026 Benjamin Vernoux <bvernoux@hydrasdr.com>
 
     This program is free software; you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -17,30 +20,15 @@
 #include <stdlib.h>
 #include <string.h>
 #include <signal.h>
+#include <math.h>
 #include "sdr.h"
 #include "r_util.h"
 #include "optparse.h"
 #include "logger.h"
 #include "fatal.h"
 #include "compat_pthread.h"
-#ifdef RTLSDR
-#include <rtl-sdr.h>
-#if defined(__linux__) && (defined(__GNUC__) || defined(__clang__))
-// not available in rtlsdr 0.5.3, allow weak link for Linux
-int __attribute__((weak)) rtlsdr_set_bias_tee(rtlsdr_dev_t *dev, int on);
-#endif
-#ifdef LIBUSB1
-#include <libusb.h> /* libusb_error_name(), libusb_strerror() */
-#endif
-#endif
-#ifdef SOAPYSDR
-#include <SoapySDR/Version.h>
-#include <SoapySDR/Device.h>
-#include <SoapySDR/Formats.h>
-#include <SoapySDR/Logger.h>
-#if (SOAPY_SDR_API_VERSION < 0x00080000)
-#define SoapySDR_free(ptr) free(ptr)
-#endif
+#ifdef HYDRASDR
+#include <hydrasdr.h>
 #endif
 
 #ifndef _MSC_VER
@@ -77,21 +65,21 @@ int __attribute__((weak)) rtlsdr_set_bias_tee(rtlsdr_dev_t *dev, int on);
 
 #define GAIN_STR_MAX_SIZE 64
 
+/*============================================================================
+ * Float32 Polyphase Resampler (HydraSDR)
+ * Shared implementation from cf32_resampler.h
+ *============================================================================*/
+#ifdef HYDRASDR
+#include "cf32_resampler.h"
+#endif /* HYDRASDR */
+
 struct sdr_dev {
     SOCKET rtl_tcp;
     uint32_t rtl_tcp_freq; ///< last known center frequency, rtl_tcp only.
     uint32_t rtl_tcp_rate; ///< last known sample rate, rtl_tcp only.
 
-#ifdef SOAPYSDR
-    SoapySDRDevice *soapy_dev;
-    SoapySDRStream *soapy_stream;
-    double fullScale;
-#endif
-
-#ifdef RTLSDR
-    rtlsdr_dev_t *rtlsdr_dev;
-    sdr_event_cb_t rtlsdr_cb;
-    void *rtlsdr_cb_ctx;
+#ifdef HYDRASDR
+    void *hydrasdr_ctx; ///< HydraSDR context (hydrasdr_ctx_t *)
 #endif
 
     char *dev_info;
@@ -103,6 +91,7 @@ struct sdr_dev {
 
     int sample_size;
     int sample_signed;
+    sdr_sample_format_t sample_format;  ///< Native sample format
 
     uint32_t sample_rate;
     uint32_t center_frequency;
@@ -129,6 +118,15 @@ struct rtl_tcp_info {
     uint32_t tuner_gain_count; // big endian
 };
 #pragma pack(pop)
+
+/* Disable GCC analyzer false positives for Windows socket code.
+   The analyzer doesn't understand that INVALID_SOCKET is the only failure
+   value on Windows (where SOCKET is an unsigned type). */
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wanalyzer-fd-leak"
+#pragma GCC diagnostic ignored "-Wanalyzer-fd-use-without-check"
+#endif
 
 static int rtltcp_open(sdr_dev_t **out_dev, char const *dev_query, int verbose)
 {
@@ -173,15 +171,14 @@ static int rtltcp_open(sdr_dev_t **out_dev, char const *dev_query, int verbose)
     sock = INVALID_SOCKET;
     for (res = res0; res; res = res->ai_next) {
         sock = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
-        if (sock >= 0) {
-            ret = connect(sock, res->ai_addr, res->ai_addrlen);
-            if (ret == -1) {
-                perror("connect");
-                closesocket(sock);
-                sock = INVALID_SOCKET;
-            }
-            else
+        if (sock != INVALID_SOCKET) {
+            ret = connect(sock, res->ai_addr, (int)res->ai_addrlen);
+            if (ret == 0) {
                 break; // success
+            }
+            perror("connect");
+            closesocket(sock);
+            sock = INVALID_SOCKET;
         }
     }
     freeaddrinfo(res0);
@@ -199,11 +196,13 @@ static int rtltcp_open(sdr_dev_t **out_dev, char const *dev_query, int verbose)
     ret = recv(sock, (char *)&info, sizeof (info), 0);
     if (ret != 12) {
         print_logf(LOG_ERROR, __func__, "Bad rtl_tcp header (%d)", ret);
+        closesocket(sock);
         return -1;
     }
     if (strncmp(info.magic, "RTL0", 4)) {
         info.tuner_number = 0; // terminate magic
         print_logf(LOG_ERROR, __func__, "Bad rtl_tcp header magic \"%s\"", info.magic);
+        closesocket(sock);
         return -1;
     }
 
@@ -211,13 +210,14 @@ static int rtltcp_open(sdr_dev_t **out_dev, char const *dev_query, int verbose)
     //int tuner_gain_count  = ntohl(info.tuner_gain_count);
 
     char const *tuner_names[] = { "Unknown", "E4000", "FC0012", "FC0013", "FC2580", "R820T", "R828D" };
-    char const *tuner_name = tuner_number > sizeof (tuner_names) ? "Invalid" : tuner_names[tuner_number];
+    char const *tuner_name = tuner_number >= sizeof(tuner_names) / sizeof(tuner_names[0]) ? "Invalid" : tuner_names[tuner_number];
 
     print_logf(LOG_CRITICAL, "SDR", "rtl_tcp connected to %s:%s (Tuner: %s)", host, port, tuner_name);
 
     sdr_dev_t *dev = calloc(1, sizeof(sdr_dev_t));
     if (!dev) {
         WARN_CALLOC("rtltcp_open()");
+        closesocket(sock);
         return -1; // NOTE: returns error on alloc failure.
     }
 #ifdef THREADS
@@ -231,6 +231,10 @@ static int rtltcp_open(sdr_dev_t **out_dev, char const *dev_query, int verbose)
     *out_dev = dev;
     return 0;
 }
+
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
 
 static int rtltcp_close(SOCKET sock)
 {
@@ -353,747 +357,899 @@ static int rtltcp_command(sdr_dev_t *dev, char cmd, int param)
     return sizeof(command) == send(dev->rtl_tcp, (const char*) &command, sizeof(command), 0) ? 0 : -1;
 }
 
-/* RTL-SDR helpers */
+/* HydraSDR helpers */
 
-#ifdef RTLSDR
+#ifdef HYDRASDR
 
-static int sdr_open_rtl(sdr_dev_t **out_dev, char const *dev_query, int verbose)
+/**
+ * HydraSDR device context stored within sdr_dev_t
+ */
+typedef struct {
+    struct hydrasdr_device *dev;
+    hydrasdr_device_info_t info;
+    uint32_t *samplerates;
+    uint32_t samplerate_count;
+    uint32_t current_samplerate;
+    uint32_t current_frequency;
+    int streaming;
+
+    /* Callback bridge */
+    sdr_event_cb_t cb;
+    void *cb_ctx;
+
+    /* Buffer management */
+    uint8_t *buffer;
+    size_t buffer_size;
+    size_t buffer_pos;
+
+    /* Sample info */
+    int sample_size;
+    int sample_signed;
+
+    /* Polyphase resampler (float32 -> CU8 with rate conversion) */
+    cf32_resampler_t resampler;
+    uint32_t requested_samplerate;    /* Rate requested by hydrasdr_433 */
+    int needs_resampling;        /* 1 if actual != requested */
+
+    int manual_gain_set;         /* 1 if gain was manually set via settings */
+    uint32_t agc_enabled;        /* bitmask: bit N = AGC type N is enabled */
+    uint32_t gains_set;          /* bitmask: bit N = gain type N was explicitly set */
+} hydrasdr_ctx_t;
+
+/**
+ * Parse device query string for HydraSDR
+ * Formats:
+ *   hydrasdr          - first device
+ *   hydrasdr:0        - device by index
+ *   hydrasdr:serial=XXXX - device by serial
+ */
+static int hydrasdr_parse_query(char const *dev_query, char *serial_out, size_t serial_len)
 {
-    uint32_t device_count = rtlsdr_get_device_count();
-    if (!device_count) {
-        print_log(LOG_CRITICAL, "SDR", "No supported devices found.");
-        return -1;
+    int index = 0;
+    serial_out[0] = '\0';
+
+    if (!dev_query)
+        return 0;
+
+    /* Strip scheme prefix */
+    char const *param = dev_query;
+    if (strncmp(param, "hydrasdr", 8) == 0) {
+        param += 8;
+        if (*param == ':')
+            param++;
+    }
+
+    if (!*param)
+        return 0;
+
+    /* Check for serial= */
+    if (strncmp(param, "serial=", 7) == 0) {
+        snprintf(serial_out, serial_len, "%s", param + 7);
+        return -1; /* Indicates serial mode */
+    }
+
+    /* Try as index */
+    index = atoi(param);
+    return index;
+}
+
+/**
+ * Find best matching sample rate from available rates
+ * Tries to find exact match first, then prefers the next higher rate
+ * for better signal quality, finally falls back to highest available rate.
+ */
+static uint32_t hydrasdr_find_best_samplerate(hydrasdr_ctx_t *ctx, uint32_t requested, int verbose)
+{
+    if (!ctx->samplerates || ctx->samplerate_count == 0)
+        return 0;
+
+    /* First, check for exact match */
+    for (uint32_t i = 0; i < ctx->samplerate_count; i++) {
+        if (ctx->samplerates[i] == requested) {
+            if (verbose)
+                print_logf(LOG_NOTICE, "HydraSDR", "Exact sample rate match: %u Hz", requested);
+            return requested;
+        }
+    }
+
+    /* Find smallest rate that is >= requested (prefer higher for quality) */
+    uint32_t best_higher = UINT32_MAX;
+    for (uint32_t i = 0; i < ctx->samplerate_count; i++) {
+        uint32_t rate = ctx->samplerates[i];
+        if (rate >= requested && rate < best_higher) {
+            best_higher = rate;
+        }
+    }
+
+    if (best_higher != UINT32_MAX) {
+        if (verbose)
+            print_logf(LOG_NOTICE, "HydraSDR",
+                       "Requested %u Hz, using higher rate %u Hz",
+                       requested, best_higher);
+        return best_higher;
+    }
+
+    /* Fall back to highest available rate (all rates are lower than requested) */
+    uint32_t best_rate = 0;
+    for (uint32_t i = 0; i < ctx->samplerate_count; i++) {
+        if (ctx->samplerates[i] > best_rate) {
+            best_rate = ctx->samplerates[i];
+        }
     }
 
     if (verbose)
-        print_logf(LOG_NOTICE, "SDR", "Found %u device(s)", device_count);
+        print_logf(LOG_WARNING, "HydraSDR",
+                   "Requested %u Hz too high, using maximum rate %u Hz",
+                   requested, best_rate);
 
-    int dev_index = 0;
-    // select rtlsdr device by serial (-d :<serial>)
-    if (dev_query && *dev_query == ':') {
-        dev_index = rtlsdr_get_index_by_serial(&dev_query[1]);
-        if (dev_index < 0) {
-            if (verbose)
-                print_logf(LOG_ERROR, "SDR", "Could not find device with serial '%s' (err %d)",
-                        &dev_query[1], dev_index);
-            return -1;
-        }
-    }
-
-    // select rtlsdr device by number (-d <n>)
-    else if (dev_query) {
-        dev_index = atoi(dev_query);
-        // check if 0 is a parsing error?
-        if (dev_index < 0) {
-            // select first available rtlsdr device
-            dev_index = 0;
-            dev_query = NULL;
-        }
-    }
-
-    char vendor[256] = "n/a", product[256] = "n/a", serial[256] = "n/a";
-    int r = -1;
-    sdr_dev_t *dev = calloc(1, sizeof(sdr_dev_t));
-    if (!dev) {
-        WARN_CALLOC("sdr_open_rtl()");
-        return -1; // NOTE: returns error on alloc failure.
-    }
-#ifdef THREADS
-    pthread_mutex_init(&dev->lock, NULL);
-#endif
-
-    for (uint32_t i = dev_query ? dev_index : 0;
-            //cast quiets -Wsign-compare; if dev_index were < 0, would have returned -1 above
-            i < (dev_query ? (unsigned)dev_index + 1 : device_count);
-            i++) {
-        rtlsdr_get_device_usb_strings(i, vendor, product, serial);
-
-        if (verbose)
-            print_logf(LOG_NOTICE, "SDR", "trying device %u: %s, %s, SN: %s",
-                    i, vendor, product, serial);
-
-        r = rtlsdr_open(&dev->rtlsdr_dev, i);
-        if (r < 0) {
-            if (verbose)
-                print_logf(LOG_ERROR, __func__, "Failed to open rtlsdr device #%u.", i);
-        }
-        else {
-            if (verbose)
-                print_logf(LOG_CRITICAL, "SDR", "Using device %u: %s, %s, SN: %s, \"%s\"",
-                        i, vendor, product, serial, rtlsdr_get_device_name(i));
-            dev->sample_size = sizeof(uint8_t) * 2; // CU8
-            dev->sample_signed = 0;
-
-            size_t info_len = 41 + strlen(vendor) + strlen(product) + strlen(serial);
-            dev->dev_info = malloc(info_len);
-            if (!dev->dev_info)
-                FATAL_MALLOC("sdr_open_rtl");
-            snprintf(dev->dev_info, info_len, "{\"vendor\":\"%s\", \"product\":\"%s\", \"serial\":\"%s\"}",
-                    vendor, product, serial);
-            break;
-        }
-    }
-    if (r < 0) {
-        free(dev);
-        if (verbose)
-            print_log(LOG_ERROR, __func__, "Unable to open a device");
-    }
-    else {
-        *out_dev = dev;
-    }
-    return r;
+    return best_rate;
 }
 
-static int rtlsdr_find_tuner_gain(sdr_dev_t *dev, int centigain, int verbose)
+/**
+ * Distribute gain across available gain stages
+ * Uses unified gain API in a hardware-agnostic way
+ */
+/**
+ * Check if a gain type is actually managed by this hardware.
+ * A gain range of 0-0 in device_info means the gain is not managed,
+ * even if the capability flag is set and the gain API returns cached values.
+ * Returns the max_value from device_info, or 0 if not managed.
+ */
+static int hydrasdr_get_gain_max(hydrasdr_ctx_t *ctx, hydrasdr_gain_type_t type)
 {
-    /* Get allowed gains */
-    int gains_count = rtlsdr_get_tuner_gains(dev->rtlsdr_dev, NULL);
-    if (gains_count < 0) {
-        if (verbose)
-            print_log(LOG_WARNING, __func__, "Unable to get exact gains");
-        return centigain;
-    }
-    if (gains_count < 1) {
-        if (verbose)
-            print_log(LOG_WARNING, __func__, "No exact gains");
-        return centigain;
-    }
-    if (gains_count > 29) {
-        print_log(LOG_ERROR, __func__, "Unexpected gain count, notify maintainers please!");
-        return centigain;
-    }
-    // We known the maximum nunmber of gains is 29.
-    // Let's not waste an alloc
-    int gains[29] = {0};
-    rtlsdr_get_tuner_gains(dev->rtlsdr_dev, gains);
+    hydrasdr_device_info_t *info = &ctx->info;
 
-    /* Find allowed gain */
-    for (int i = 0; i < gains_count; ++i) {
-        if (centigain <= gains[i]) {
-            centigain = gains[i];
-            break;
-        }
+    switch (type) {
+    case HYDRASDR_GAIN_TYPE_LNA:
+        return (info->features & HYDRASDR_CAP_LNA_GAIN) ? info->lna_gain.max_value : 0;
+    case HYDRASDR_GAIN_TYPE_RF:
+        return (info->features & HYDRASDR_CAP_RF_GAIN) ? info->rf_gain.max_value : 0;
+    case HYDRASDR_GAIN_TYPE_MIXER:
+        return (info->features & HYDRASDR_CAP_MIXER_GAIN) ? info->mixer_gain.max_value : 0;
+    case HYDRASDR_GAIN_TYPE_FILTER:
+        return (info->features & HYDRASDR_CAP_FILTER_GAIN) ? info->filter_gain.max_value : 0;
+    case HYDRASDR_GAIN_TYPE_VGA:
+        return (info->features & HYDRASDR_CAP_VGA_GAIN) ? info->vga_gain.max_value : 0;
+    case HYDRASDR_GAIN_TYPE_LINEARITY:
+        return (info->features & HYDRASDR_CAP_LINEARITY_GAIN) ? info->linearity_gain.max_value : 0;
+    case HYDRASDR_GAIN_TYPE_SENSITIVITY:
+        return (info->features & HYDRASDR_CAP_SENSITIVITY_GAIN) ? info->sensitivity_gain.max_value : 0;
+    default:
+        return 0;
     }
-    if (centigain > gains[gains_count - 1]) {
-        centigain = gains[gains_count - 1];
-    }
-
-    return centigain;
 }
 
-static void rtlsdr_read_cb(unsigned char *iq_buf, uint32_t len, void *ctx)
+static int hydrasdr_set_total_gain(hydrasdr_ctx_t *ctx, int gain_val, int verbose)
 {
-    sdr_dev_t *dev = ctx;
+    int r;
 
-    //fprintf(stderr, "rtlsdr_read_cb enter...\n");
-#ifdef THREADS
-    pthread_mutex_lock(&dev->lock);
-    int exit_acquire = dev->exit_acquire;
-    pthread_mutex_unlock(&dev->lock);
-    if (exit_acquire) {
-        // we get one more call after rtlsdr_cancel_async(),
-        // it then takes a full second until rtlsdr_read_async() ends.
-        //fprintf(stderr, "rtlsdr_read_cb stopping...\n");
-        return; // do not deliver any more events
-    }
-#endif
-
-    if (dev->buffer_pos + len > dev->buffer_size)
-        dev->buffer_pos = 0;
-    uint8_t *buffer = &dev->buffer[dev->buffer_pos];
-    dev->buffer_pos += len;
-
-    // NOTE: we need to copy the buffer, it might go away on cancel_async
-    memcpy(buffer, iq_buf, len);
-
-#ifdef THREADS
-    pthread_mutex_lock(&dev->lock);
-#endif
-    uint32_t sample_rate      = dev->sample_rate;
-    uint32_t center_frequency = dev->center_frequency;
-#ifdef THREADS
-    pthread_mutex_unlock(&dev->lock);
-#endif
-    sdr_event_t ev = {
-            .ev               = SDR_EV_DATA,
-            .sample_rate      = sample_rate,
-            .center_frequency = center_frequency,
-            .buf              = buffer,
-            .len              = len,
+    /*
+     * Strategy: Hardware-agnostic gain setting.
+     * Use device_info gain ranges as the source of truth — a range of
+     * 0-0 means the gain type is not managed by this hardware.
+     * The gain_val is a raw value, clamped to the device's range.
+     *
+     * Priority order:
+     *  1. Linearity — composite preset, configures all gain stages
+     *  2. Sensitivity — composite preset, configures all gain stages
+     *  3. VGA — fallback for devices without composite presets
+     */
+    static const struct {
+        hydrasdr_gain_type_t type;
+        const char *name;
+    } gain_order[] = {
+        { HYDRASDR_GAIN_TYPE_LINEARITY,   "Linearity" },
+        { HYDRASDR_GAIN_TYPE_SENSITIVITY, "Sensitivity" },
+        { HYDRASDR_GAIN_TYPE_VGA,         "VGA" },
     };
-    //fprintf(stderr, "rtlsdr_read_cb cb...\n");
-    if (len > 0) // prevent a crash in callback
-        dev->rtlsdr_cb(&ev, dev->rtlsdr_cb_ctx);
-    //fprintf(stderr, "rtlsdr_read_cb cb done.\n");
-    // NOTE: we actually need to copy the buffer to prevent it going away on cancel_async
-}
 
-static int rtlsdr_read_loop(sdr_dev_t *dev, sdr_event_cb_t cb, void *ctx, uint32_t buf_num, uint32_t buf_len)
-{
-    size_t buffer_size = (size_t)buf_num * buf_len;
-    if (dev->buffer_size != buffer_size) {
-        free(dev->buffer);
-        dev->buffer = malloc(buffer_size);
-        if (!dev->buffer) {
-            WARN_MALLOC("rtlsdr_read_loop()");
-            return -1; // NOTE: returns error on alloc failure.
+    for (int i = 0; i < (int)(sizeof(gain_order) / sizeof(gain_order[0])); i++) {
+        int max_val = hydrasdr_get_gain_max(ctx, gain_order[i].type);
+        if (max_val <= 0)
+            continue;
+
+        int val = gain_val;
+        if (val < 0)
+            val = 0;
+        if (val > max_val)
+            val = max_val;
+
+        r = hydrasdr_set_gain(ctx->dev, gain_order[i].type, (uint8_t)val);
+        if (r == HYDRASDR_SUCCESS) {
+            ctx->gains_set |= (1u << gain_order[i].type);
+            if (verbose)
+                print_logf(LOG_NOTICE, "HydraSDR", "%s gain set to %d (range 0-%d)",
+                           gain_order[i].name, val, max_val);
+            return 0;
         }
-        dev->buffer_size = buffer_size;
-        dev->buffer_pos = 0;
     }
 
-    int r = 0;
+    if (verbose)
+        print_log(LOG_WARNING, "HydraSDR", "No supported gain mode available");
 
-    dev->rtlsdr_cb = cb;
-    dev->rtlsdr_cb_ctx = ctx;
-
-    dev->running = 1;
-
-        r = rtlsdr_read_async(dev->rtlsdr_dev, rtlsdr_read_cb, dev, buf_num, buf_len);
-        // rtlsdr_read_async() returns possible error codes from:
-        //     if (!dev) return -1;
-        //     if (RTLSDR_INACTIVE != dev->async_status) return -2;
-        //     r = libusb_submit_transfer(dev->xfer[i]);
-        //     r = libusb_handle_events_timeout_completed(dev->ctx, &tv,
-        //     r = libusb_cancel_transfer(dev->xfer[i]);
-        // We can safely assume it's an libusb error.
-        if (r < 0) {
-#ifdef LIBUSB1
-            print_logf(LOG_ERROR, __func__, "%s: %s! "
-                            "Check your RTL-SDR dongle, USB cables, and power supply.",
-                    libusb_error_name(r), libusb_strerror(r));
-#else
-            print_logf(LOG_ERROR, __func__, "LIBUSB_ERROR: %d! "
-                            "Check your RTL-SDR dongle, USB cables, and power supply.",
-                    r);
-#endif
-            dev->running = 0;
-        }
-    print_log(LOG_DEBUG, __func__, "rtlsdr_read_async done");
-
-    return r;
+    return -1;
 }
 
-#endif
+/**
+ * Enable AGC on all available gain stages
+ */
+static int hydrasdr_enable_agc(hydrasdr_ctx_t *ctx, int verbose)
+{
+    int r = 0;
 
-/* SoapySDR helpers */
+    if (ctx->info.features & HYDRASDR_CAP_LNA_AGC) {
+        r = hydrasdr_set_gain(ctx->dev, HYDRASDR_GAIN_TYPE_LNA_AGC, 1);
+        if (r == HYDRASDR_SUCCESS) {
+            ctx->agc_enabled |= (1u << HYDRASDR_GAIN_TYPE_LNA_AGC);
+            if (verbose)
+                print_log(LOG_NOTICE, "HydraSDR", "LNA AGC enabled");
+        }
+    }
 
-#ifdef SOAPYSDR
+    if (ctx->info.features & HYDRASDR_CAP_MIXER_AGC) {
+        r = hydrasdr_set_gain(ctx->dev, HYDRASDR_GAIN_TYPE_MIXER_AGC, 1);
+        if (r == HYDRASDR_SUCCESS) {
+            ctx->agc_enabled |= (1u << HYDRASDR_GAIN_TYPE_MIXER_AGC);
+            if (verbose)
+                print_log(LOG_NOTICE, "HydraSDR", "Mixer AGC enabled");
+        }
+    }
 
-static int soapysdr_set_bandwidth(SoapySDRDevice *dev, uint32_t bandwidth)
+    if (verbose)
+        print_log(LOG_NOTICE, "HydraSDR", "Automatic gain control enabled");
+
+    return 0;
+}
+
+/**
+ * HydraSDR sample callback - bridges to hydrasdr_433 callback
+ * Handles native float32 IQ samples with optional polyphase resampling.
+ */
+static int hydrasdr_sample_callback(hydrasdr_transfer_t *transfer)
+{
+    hydrasdr_ctx_t *ctx = (hydrasdr_ctx_t *)transfer->ctx;
+
+    if (!ctx || !ctx->cb || !ctx->streaming)
+        return -1;
+
+    const float *input_samples = (const float *)transfer->samples;
+    int num_complex_samples = (int)transfer->sample_count;
+
+    const float *output_samples;
+    int output_sample_count;
+    uint32_t output_rate;
+
+    if (ctx->needs_resampling && ctx->resampler.initialized) {
+        /* Resample float32 -> float32 at correct rate */
+        float *resampled;
+        int max_output = (int)ctx->resampler.output_buf_size;
+        output_sample_count = cf32_resampler_process(&ctx->resampler,
+            input_samples, num_complex_samples, &resampled, max_output);
+        output_samples = resampled;
+        output_rate = ctx->requested_samplerate;
+    } else {
+        /* Pass through without resampling (preserves const) */
+        output_samples = input_samples;
+        output_sample_count = num_complex_samples;
+        output_rate = ctx->current_samplerate;
+    }
+
+    /* Build event for hydrasdr_433 with native CF32 format */
+    sdr_event_t ev = {
+        .ev               = SDR_EV_DATA,
+        .sample_rate      = output_rate,
+        .center_frequency = ctx->current_frequency,
+        .buf              = output_samples,
+        .len              = (int)((size_t)output_sample_count * sizeof(float) * 2),
+        .sample_format    = SDR_SAMPLE_CF32,
+    };
+
+    ctx->cb(&ev, ctx->cb_ctx);
+
+    return ctx->streaming ? 0 : -1;
+}
+
+/**
+ * Show HydraSDR device information
+ */
+static void hydrasdr_show_device_info(hydrasdr_ctx_t *ctx, int verbose)
+{
+    if (!verbose)
+        return;
+
+    hydrasdr_device_info_t *info = &ctx->info;
+
+    print_logf(LOG_CRITICAL, "HydraSDR", "Board: %s (ID: %d)", info->board_name, info->board_id);
+    print_logf(LOG_CRITICAL, "HydraSDR", "Firmware: %s", info->firmware_version);
+    print_logf(LOG_NOTICE, "HydraSDR", "Frequency range: %llu - %llu Hz",
+               (unsigned long long)info->min_frequency,
+               (unsigned long long)info->max_frequency);
+
+    /* List available sample rates */
+    if (ctx->samplerates && ctx->samplerate_count > 0) {
+        fprintf(stderr, "HydraSDR: Available sample rates: ");
+        for (uint32_t i = 0; i < ctx->samplerate_count; i++) {
+            fprintf(stderr, "%u%s", ctx->samplerates[i],
+                    (i < ctx->samplerate_count - 1) ? ", " : "\n");
+        }
+    }
+
+    /* Report capabilities */
+    if (info->features & HYDRASDR_CAP_BIAS_TEE)
+        print_log(LOG_NOTICE, "HydraSDR", "Bias tee: available");
+
+    /*
+     * Show gain controls using device_info as the authoritative source.
+     * A gain range of 0-0 in device_info means the gain type is not
+     * managed by this hardware.
+     *
+     * Gain modes are mutually exclusive:
+     *  - Composite presets (linearity/sensitivity): configure all stages
+     *  - Manual per-stage (lna/mixer/vga): set individual stages
+     *  - AGC: automatic gain control per stage
+     * Use -g for composite presets, -t for per-stage or AGC control.
+     */
+    static const struct {
+        hydrasdr_gain_type_t type;
+        const char *name;
+    } stage_gains[] = {
+        { HYDRASDR_GAIN_TYPE_LNA,    "LNA" },
+        { HYDRASDR_GAIN_TYPE_RF,     "RF" },
+        { HYDRASDR_GAIN_TYPE_MIXER,  "Mixer" },
+        { HYDRASDR_GAIN_TYPE_FILTER, "Filter" },
+        { HYDRASDR_GAIN_TYPE_VGA,    "VGA" },
+    };
+    static const struct {
+        hydrasdr_gain_type_t type;
+        const char *name;
+    } preset_gains[] = {
+        { HYDRASDR_GAIN_TYPE_LINEARITY,   "Linearity" },
+        { HYDRASDR_GAIN_TYPE_SENSITIVITY, "Sensitivity" },
+    };
+    static const struct {
+        hydrasdr_gain_type_t type;
+        uint32_t cap_flag;
+        const char *name;
+    } agc_gains[] = {
+        { HYDRASDR_GAIN_TYPE_LNA_AGC,   HYDRASDR_CAP_LNA_AGC,   "LNA AGC" },
+        { HYDRASDR_GAIN_TYPE_MIXER_AGC, HYDRASDR_CAP_MIXER_AGC, "Mixer AGC" },
+    };
+
+    int has_stages = 0, has_presets = 0, has_agc = 0;
+
+    /* Check what's available */
+    for (int i = 0; i < (int)(sizeof(stage_gains) / sizeof(stage_gains[0])); i++)
+        if (hydrasdr_get_gain_max(ctx, stage_gains[i].type) > 0)
+            has_stages = 1;
+    for (int i = 0; i < (int)(sizeof(preset_gains) / sizeof(preset_gains[0])); i++)
+        if (hydrasdr_get_gain_max(ctx, preset_gains[i].type) > 0)
+            has_presets = 1;
+    for (int i = 0; i < (int)(sizeof(agc_gains) / sizeof(agc_gains[0])); i++)
+        if (info->features & agc_gains[i].cap_flag)
+            has_agc = 1;
+
+    if (!has_stages && !has_presets && !has_agc)
+        return;
+
+    print_log(LOG_NOTICE, "HydraSDR", "Gain controls (modes are mutually exclusive):");
+
+    if (has_presets) {
+        print_log(LOG_NOTICE, "HydraSDR",
+                  "  Presets (-g dB or -t name=val):");
+        for (int i = 0; i < (int)(sizeof(preset_gains) / sizeof(preset_gains[0])); i++) {
+            int max_val = hydrasdr_get_gain_max(ctx, preset_gains[i].type);
+            if (max_val <= 0)
+                continue;
+            print_logf(LOG_NOTICE, "HydraSDR", "    %-12s range 0-%d",
+                       preset_gains[i].name, max_val);
+        }
+    }
+
+    if (has_stages) {
+        print_log(LOG_NOTICE, "HydraSDR",
+                  "  Per-stage (-t name=val, manual control):");
+        for (int i = 0; i < (int)(sizeof(stage_gains) / sizeof(stage_gains[0])); i++) {
+            int max_val = hydrasdr_get_gain_max(ctx, stage_gains[i].type);
+            if (max_val <= 0)
+                continue;
+            print_logf(LOG_NOTICE, "HydraSDR", "    %-12s range 0-%d",
+                       stage_gains[i].name, max_val);
+        }
+    }
+
+    if (has_agc) {
+        print_log(LOG_NOTICE, "HydraSDR",
+                  "  AGC (-g 0 enables all, or -t is not set):");
+        for (int i = 0; i < (int)(sizeof(agc_gains) / sizeof(agc_gains[0])); i++) {
+            if (!(info->features & agc_gains[i].cap_flag))
+                continue;
+            print_logf(LOG_NOTICE, "HydraSDR", "    %-12s on/off",
+                       agc_gains[i].name);
+        }
+    }
+}
+
+static int sdr_open_hydrasdr(sdr_dev_t **out_dev, char const *dev_query, int verbose)
 {
     int r;
-    r = (int)SoapySDRDevice_setBandwidth(dev, SOAPY_SDR_RX, 0, (double)bandwidth);
-    uint32_t applied_bw = 0;
-    if (r != 0) {
-        print_log(LOG_WARNING, "SDR", "Failed to set bandwidth.");
-    }
-    else if (bandwidth > 0) {
-        applied_bw = (uint32_t)SoapySDRDevice_getBandwidth(dev, SOAPY_SDR_RX, 0);
-        if (applied_bw)
-            print_logf(LOG_NOTICE, "SDR", "Bandwidth parameter %u Hz resulted in %u Hz.", bandwidth, applied_bw);
-        else
-            print_logf(LOG_NOTICE, "SDR", "Set bandwidth parameter %u Hz.", bandwidth);
-    }
-    else {
-        print_logf(LOG_NOTICE, "SDR", "Bandwidth set to automatic resulted in %u Hz.", applied_bw);
-    }
-    return r;
-}
+    char serial[64] = {0};
+    int dev_index;
+    hydrasdr_ctx_t *ctx = NULL;
 
-static int soapysdr_direct_sampling(SoapySDRDevice *dev, int on)
-{
-    int r = 0;
-    char const *value;
-    if (on == 0)
-        value = "0";
-    else if (on == 1)
-        value = "1";
-    else if (on == 2)
-        value = "2";
-    else
+    /* Parse query string */
+    dev_index = hydrasdr_parse_query(dev_query, serial, sizeof(serial));
+
+    /* Enumerate devices - first get count */
+    int count = hydrasdr_list_devices(NULL, 0);
+    if (count < 0) {
+        print_logf(LOG_ERROR, "HydraSDR", "Failed to enumerate devices: %s",
+                   hydrasdr_error_name(count));
         return -1;
-    SoapySDRDevice_writeSetting(dev, "direct_samp", value);
-    char *set_value = SoapySDRDevice_readSetting(dev, "direct_samp");
-
-    if (set_value == NULL) {
-        print_log(LOG_ERROR, __func__, "Failed to set direct sampling moden");
-        return r;
     }
-    int set_num = atoi(set_value);
-    if (set_num == 0) {
-        print_log(LOG_CRITICAL, "SDR", "Direct sampling mode disabled.");}
-    else if (set_num == 1) {
-        print_log(LOG_CRITICAL, "SDR", "Enabled direct sampling mode, input 1/I.");}
-    else if (set_num == 2) {
-        print_log(LOG_CRITICAL, "SDR", "Enabled direct sampling mode, input 2/Q.");}
-    else if (set_num == 3) {
-        print_log(LOG_CRITICAL, "SDR", "Enabled no-mod direct sampling mode.");}
-    SoapySDR_free(set_value);
-    return r;
-}
-
-static int soapysdr_offset_tuning(SoapySDRDevice *dev)
-{
-    int r = 0;
-    SoapySDRDevice_writeSetting(dev, "offset_tune", "true");
-    char *set_value = SoapySDRDevice_readSetting(dev, "offset_tune");
-
-    if (strcmp(set_value, "true") != 0) {
-        /* TODO: detection of failure modes
-        if (r == -2)
-            print_log(LOG_WARNING, __func__, "Failed to set offset tuning: tuner doesn't support offset tuning!");
-        else if (r == -3)
-            print_log(LOG_WARNING, __func__, "Failed to set offset tuning: direct sampling not combinable with offset tuning!");
-        else
-        */
-            print_log(LOG_WARNING, __func__, "Failed to set offset tuning.");
-    }
-    else {
-        print_log(LOG_CRITICAL, "SDR", "Offset tuning mode enabled.");
-    }
-    SoapySDR_free(set_value);
-    return r;
-}
-
-static int soapysdr_auto_gain(SoapySDRDevice *dev, int verbose)
-{
-    int r = 0;
-
-    r = SoapySDRDevice_hasGainMode(dev, SOAPY_SDR_RX, 0);
-    if (r) {
-        r = SoapySDRDevice_setGainMode(dev, SOAPY_SDR_RX, 0, 1);
-        if (r != 0) {
-            print_log(LOG_WARNING, __func__, "Failed to enable automatic gain.");
-        }
-        else {
-            if (verbose)
-                print_log(LOG_CRITICAL, "SDR", "Tuner set to automatic gain.");
-        }
-    }
-
-    // Per-driver hacks TODO: clean this up
-    char *driver = SoapySDRDevice_getDriverKey(dev);
-    if (strcmp(driver, "HackRF") == 0) {
-        // HackRF has three gains LNA, VGA, and AMP, setting total distributes amongst, 116.0 dB seems to work well,
-        // even though it logs HACKRF_ERROR_INVALID_PARAM? https://github.com/rxseger/rx_tools/issues/9
-        // Total gain is distributed amongst all gains, 116 = 37,65,1; the LNA is OK (<40) but VGA is out of range (65 > 62)
-        // TODO: generic means to set all gains, of any SDR? string parsing LNA=#,VGA=#,AMP=#?
-        r = SoapySDRDevice_setGainElement(dev, SOAPY_SDR_RX, 0, "LNA", 40.); // max 40
-        if (r != 0) {
-            print_log(LOG_WARNING, __func__, "Failed to set LNA tuner gain.");
-        }
-        r = SoapySDRDevice_setGainElement(dev, SOAPY_SDR_RX, 0, "VGA", 20.); // max 65
-        if (r != 0) {
-            print_log(LOG_WARNING, __func__, "Failed to set VGA tuner gain.");
-        }
-        r = SoapySDRDevice_setGainElement(dev, SOAPY_SDR_RX, 0, "AMP", 0.); // on or off
-        if (r != 0) {
-            print_log(LOG_WARNING, __func__, "Failed to set AMP tuner gain.");
-        }
-
-    }
-    SoapySDR_free(driver);
-    // otherwise leave unset, hopefully the driver has good defaults
-
-    return r;
-}
-
-static int soapysdr_gain_str_set(SoapySDRDevice *dev, char const *gain_str, int verbose)
-{
-    if (!gain_str || !*gain_str || strlen(gain_str) >= GAIN_STR_MAX_SIZE)
+    if (count == 0) {
+        print_log(LOG_ERROR, "HydraSDR", "No HydraSDR devices found");
         return -1;
-
-    int r = 0;
-
-    // Disable automatic gain
-    r = SoapySDRDevice_hasGainMode(dev, SOAPY_SDR_RX, 0);
-    if (r) {
-        r = SoapySDRDevice_setGainMode(dev, SOAPY_SDR_RX, 0, 0);
-        if (r != 0) {
-            print_log(LOG_WARNING, __func__, "Failed to disable automatic gain.");
-        }
-        else {
-            if (verbose)
-                print_log(LOG_NOTICE, "SDR", "Tuner set to manual gain.");
-        }
     }
 
-    if (strchr(gain_str, '=')) {
-        char gain_cpy[GAIN_STR_MAX_SIZE];
-        snprintf(gain_cpy, sizeof(gain_cpy), "%s", gain_str);
-        char *gain_p = gain_cpy;
-        // Set each gain individually (more control)
-        char *name;
-        char *value;
-        while (getkwargs(&gain_p, &name, &value)) {
-            double num = atof(value);
-            if (verbose)
-                print_logf(LOG_NOTICE, "SDR", "Setting gain element %s: %f dB", name, num);
-            r = SoapySDRDevice_setGainElement(dev, SOAPY_SDR_RX, 0, name, num);
-            if (r != 0) {
-                print_logf(LOG_WARNING, __func__, "setGainElement(%s, %f) failed: %d", name, num, r);
-            }
-        }
-    }
-    else {
-        // Set overall gain and let SoapySDR distribute amongst components
-        double value = atof(gain_str);
-        r = SoapySDRDevice_setGain(dev, SOAPY_SDR_RX, 0, value);
-        if (r != 0) {
-            print_log(LOG_WARNING, __func__, "Failed to set tuner gain.");
-        }
-        else {
-            if (verbose)
-                print_logf(LOG_NOTICE, __func__, "Tuner gain set to %0.2f dB.", value);
-        }
-        // read back and print each individual gain element
-        if (verbose) {
-            size_t len = 0;
-            char **gains = SoapySDRDevice_listGains(dev, SOAPY_SDR_RX, 0, &len);
-            fprintf(stderr, "Gain elements: ");
-            for (size_t i = 0; i < len; ++i) {
-                double gain = SoapySDRDevice_getGain(dev, SOAPY_SDR_RX, 0);
-                fprintf(stderr, "%s=%g ", gains[i], gain);
-            }
-            fprintf(stderr, "\n");
-            SoapySDRStrings_clear(&gains, len);
-        }
+    /* Get serial numbers */
+    uint64_t serials[16];
+    int max_count = count < 16 ? count : 16;
+    r = hydrasdr_list_devices(serials, max_count);
+    if (r < 0) {
+        print_logf(LOG_ERROR, "HydraSDR", "Failed to get device serials: %s",
+                   hydrasdr_error_name(r));
+        return -1;
     }
 
-    return r;
-}
-
-static void soapysdr_show_device_info(SoapySDRDevice *dev)
-{
-    size_t len = 0, i = 0;
-    char *hwkey;
-    SoapySDRKwargs args;
-    char **antennas;
-    char **gains;
-    char **frequencies;
-    SoapySDRRange *frequencyRanges;
-    SoapySDRRange *rates;
-    SoapySDRRange *bandwidths;
-    double fullScale;
-    char **stream_formats;
-    char *native_stream_format;
-
-    int direction = SOAPY_SDR_RX;
-    size_t channel = 0;
-
-    hwkey = SoapySDRDevice_getHardwareKey(dev);
-    fprintf(stderr, "Using device %s: ", hwkey);
-    SoapySDR_free(hwkey);
-
-    args = SoapySDRDevice_getHardwareInfo(dev);
-    for (i = 0; i < args.size; ++i) {
-        fprintf(stderr, "%s=%s ", args.keys[i], args.vals[i]);
-    }
-    fprintf(stderr, "\n");
-    SoapySDRKwargs_clear(&args);
-
-    antennas = SoapySDRDevice_listAntennas(dev, direction, channel, &len);
-    fprintf(stderr, "Found %zu antenna(s): ", len);
-    for (i = 0; i < len; ++i) {
-        fprintf(stderr, "%s ", antennas[i]);
-    }
-    fprintf(stderr, "\n");
-    SoapySDRStrings_clear(&antennas, len);
-
-    gains = SoapySDRDevice_listGains(dev, direction, channel, &len);
-    fprintf(stderr, "Found %zu gain(s): ", len);
-    for (i = 0; i < len; ++i) {
-        SoapySDRRange gainRange = SoapySDRDevice_getGainRange(dev, direction, channel);
-        fprintf(stderr, "%s %.0f - %.0f (step %.0f) ", gains[i], gainRange.minimum, gainRange.maximum, gainRange.step);
-    }
-    fprintf(stderr, "\n");
-    SoapySDRStrings_clear(&gains, len);
-
-    frequencies = SoapySDRDevice_listFrequencies(dev, direction, channel, &len);
-    fprintf(stderr, "Found %zu frequencies: ", len);
-    for (i = 0; i < len; ++i) {
-        fprintf(stderr, "%s ", frequencies[i]);
-    }
-    fprintf(stderr, "\n");
-    SoapySDRStrings_clear(&frequencies, len);
-
-    frequencyRanges = SoapySDRDevice_getFrequencyRange(dev, direction, channel, &len);
-    fprintf(stderr, "Found %zu frequency range(s): ", len);
-    for (i = 0; i < len; ++i) {
-        fprintf(stderr, "%.0f - %.0f (step %.0f) ", frequencyRanges[i].minimum, frequencyRanges[i].maximum, frequencyRanges[i].step);
-    }
-    fprintf(stderr, "\n");
-    SoapySDR_free(frequencyRanges);
-
-    rates = SoapySDRDevice_getSampleRateRange(dev, direction, channel, &len);
-    fprintf(stderr, "Found %zu sample rate range(s): ", len);
-    for (i = 0; i < len; ++i) {
-        if (rates[i].minimum == rates[i].maximum)
-            fprintf(stderr, "%.0f ", rates[i].minimum);
-        else
-            fprintf(stderr, "%.0f - %.0f (step %.0f) ", rates[i].minimum, rates[i].maximum, rates[i].step);
-    }
-    fprintf(stderr, "\n");
-    SoapySDR_free(rates);
-
-    bandwidths = SoapySDRDevice_getBandwidthRange(dev, direction, channel, &len);
-    fprintf(stderr, "Found %zu bandwidth range(s): ", len);
-    for (i = 0; i < len; ++i) {
-        fprintf(stderr, "%.0f - %.0f (step %.0f) ", bandwidths[i].minimum, bandwidths[i].maximum, bandwidths[i].step);
-    }
-    fprintf(stderr, "\n");
-    SoapySDR_free(bandwidths);
-
-    double bandwidth = SoapySDRDevice_getBandwidth(dev, direction, channel);
-    fprintf(stderr, "Found current bandwidth %.0f\n", bandwidth);
-
-    stream_formats = SoapySDRDevice_getStreamFormats(dev, direction, channel, &len);
-    fprintf(stderr, "Found %zu stream format(s): ", len);
-    for (i = 0; i < len; ++i) {
-        fprintf(stderr, "%s ", stream_formats[i]);
-    }
-    fprintf(stderr, "\n");
-    SoapySDRStrings_clear(&stream_formats, len);
-
-    native_stream_format = SoapySDRDevice_getNativeStreamFormat(dev, direction, channel, &fullScale);
-    fprintf(stderr, "Found native stream format: %s (full scale: %.1f)\n", native_stream_format, fullScale);
-    SoapySDR_free(native_stream_format);
-}
-
-static int sdr_open_soapy(sdr_dev_t **out_dev, char const *dev_query, int verbose)
-{
     if (verbose)
-        SoapySDR_setLogLevel(SOAPY_SDR_DEBUG);
+        print_logf(LOG_NOTICE, "HydraSDR", "Found %d device(s)", count);
 
+    /* Allocate device structure */
     sdr_dev_t *dev = calloc(1, sizeof(sdr_dev_t));
     if (!dev) {
-        WARN_CALLOC("sdr_open_soapy()");
-        return -1; // NOTE: returns error on alloc failure.
+        WARN_CALLOC("sdr_open_hydrasdr()");
+        return -1;
     }
 #ifdef THREADS
     pthread_mutex_init(&dev->lock, NULL);
 #endif
 
-    dev->soapy_dev = SoapySDRDevice_makeStrArgs(dev_query);
-    if (!dev->soapy_dev) {
-        if (verbose)
-            print_logf(LOG_ERROR, __func__, "Failed to open sdr device matching '%s'.", dev_query);
+    ctx = calloc(1, sizeof(hydrasdr_ctx_t));
+    if (!ctx) {
+        WARN_CALLOC("sdr_open_hydrasdr()");
         free(dev);
         return -1;
     }
 
-    if (verbose)
-        soapysdr_show_device_info(dev->soapy_dev);
-
-    // select a stream format, in preference order: native CU8, CS8, CS16, forced CS16
-    // stream_formats = SoapySDRDevice_getStreamFormats(dev->soapy_dev, SOAPY_SDR_RX, 0, &len);
-    char *native_format = SoapySDRDevice_getNativeStreamFormat(dev->soapy_dev, SOAPY_SDR_RX, 0, &dev->fullScale);
-    char const *selected_format;
-    if (!strcmp(SOAPY_SDR_CU8, native_format)) {
-        // actually not supported by SoapySDR
-        selected_format = SOAPY_SDR_CU8;
-        dev->sample_size = sizeof(uint8_t); // CU8
-        dev->sample_signed = 0;
+    /* Open device */
+    if (serial[0]) {
+        /* Open by serial number */
+        r = hydrasdr_open_sn(&ctx->dev, (uint64_t)strtoull(serial, NULL, 16));
+    } else if (dev_index >= 0 && dev_index < count) {
+        /* Open by index - first open, then close others */
+        r = hydrasdr_open(&ctx->dev);
+    } else {
+        /* Default: open first device */
+        r = hydrasdr_open(&ctx->dev);
     }
-//    else if (!strcmp(SOAPY_SDR_CS8, native_format)) {
-//        // TODO: CS8 needs conversion to CU8
-//        // e.g. RTL-SDR (8 bit), scale is 128.0
-//        selected_format = SOAPY_SDR_CS8;
-//        dev->sample_size = sizeof(int8_t) * 2; // CS8
-//        dev->sample_signed = 1;
-//    }
-    else if (!strcmp(SOAPY_SDR_CS16, native_format)) {
-        // e.g. LimeSDR-mini (12 bit), native scale is 2048.0
-        // e.g. SDRplay RSP1A (14 bit), native scale is 32767.0
-        selected_format = SOAPY_SDR_CS16;
-        dev->sample_size = sizeof(int16_t) * 2; // CS16
-        dev->sample_signed = 1;
+
+    if (r != HYDRASDR_SUCCESS) {
+        print_logf(LOG_ERROR, "HydraSDR", "Failed to open device: %s",
+                   hydrasdr_error_name(r));
+        free(ctx);
+        free(dev);
+        return -1;
+    }
+
+    /* Get device info for capability discovery */
+    r = hydrasdr_get_device_info(ctx->dev, &ctx->info);
+    if (r != HYDRASDR_SUCCESS) {
+        print_logf(LOG_WARNING, "HydraSDR", "Failed to get device info: %s",
+                   hydrasdr_error_name(r));
+        /* Continue anyway, just won't have full capability info */
+    }
+
+    /* Get available sample rates */
+    uint32_t rate_count = 0;
+    r = hydrasdr_get_samplerates(ctx->dev, &rate_count, 0);
+    if (r == HYDRASDR_SUCCESS && rate_count > 0) {
+        ctx->samplerates = malloc(rate_count * sizeof(uint32_t));
+        if (!ctx->samplerates) {
+            /* Non-critical: continue without sample rate list */
+        }
+        else {
+            r = hydrasdr_get_samplerates(ctx->dev, ctx->samplerates, rate_count);
+            if (r == HYDRASDR_SUCCESS) {
+                ctx->samplerate_count = rate_count;
+            }
+        }
+    }
+
+    /* Set sample type to FLOAT32_IQ (native format, preserves full ADC precision) */
+    r = hydrasdr_set_sample_type(ctx->dev, HYDRASDR_SAMPLE_FLOAT32_IQ);
+    if (r != HYDRASDR_SUCCESS) {
+        print_logf(LOG_WARNING, "HydraSDR", "Failed to set sample type: %s",
+                   hydrasdr_error_name(r));
+    }
+
+
+
+    /* Configure for native float32 IQ */
+    ctx->sample_size = sizeof(float) * 2; /* CF32: 8 bytes per complex sample */
+    ctx->sample_signed = 1;
+
+    /* Show device info */
+    hydrasdr_show_device_info(ctx, verbose);
+
+    /* Build device info JSON string */
+    const char *board_name = ctx->info.board_name ? ctx->info.board_name : "unknown";
+    const char *firmware_ver = ctx->info.firmware_version ? ctx->info.firmware_version : "unknown";
+    size_t info_len = 256 + strlen(board_name) + strlen(firmware_ver);
+    dev->dev_info = malloc(info_len);
+    if (!dev->dev_info) {
+        /* Non-critical: device info just won't be available */
     }
     else {
-        // force CS16
-        selected_format = SOAPY_SDR_CS16;
-        dev->sample_size = sizeof(int16_t) * 2; // CS16
-        dev->sample_signed = 1;
-        dev->fullScale = 32768.0; // assume max for SOAPY_SDR_CS16
+        snprintf(dev->dev_info, info_len,
+                 "{\"vendor\":\"HydraSDR\", \"product\":\"%s\", \"firmware\":\"%s\", \"sample_format\":\"CF32\"}",
+                 board_name, firmware_ver);
     }
-    SoapySDR_free(native_format);
 
-    SoapySDRKwargs args = SoapySDRDevice_getHardwareInfo(dev->soapy_dev);
-    size_t info_len     = 2;
-    for (size_t i = 0; i < args.size; ++i) {
-        info_len += strlen(args.keys[i]) + strlen(args.vals[i]) + 6;
-    }
-    char *p = dev->dev_info = malloc(info_len);
-    if (!dev->dev_info)
-        FATAL_MALLOC("sdr_open_soapy");
-    for (size_t i = 0; i < args.size; ++i) {
-        p += sprintf(p, "%s\"%s\":\"%s\"", i ? "," : "{", args.keys[i], args.vals[i]);
-    }
-    sprintf(p, "}");
-    SoapySDRKwargs_clear(&args);
-
-    SoapySDRKwargs stream_args = {0};
-    int r;
-#if SOAPY_SDR_API_VERSION >= 0x00080000
-    // API version 0.8
-#undef SoapySDRDevice_setupStream
-    dev->soapy_stream = SoapySDRDevice_setupStream(dev->soapy_dev, SOAPY_SDR_RX, selected_format, NULL, 0, &stream_args);
-    r = dev->soapy_stream == NULL;
-#else
-    // API version 0.7
-    r = SoapySDRDevice_setupStream(dev->soapy_dev, &dev->soapy_stream, SOAPY_SDR_RX, selected_format, NULL, 0, &stream_args);
-#endif
-    if (r != 0) {
-        if (verbose)
-            print_log(LOG_ERROR, __func__, "Failed to setup sdr device");
-        free(dev->dev_info);
-        free(dev);
-        return -3;
-    }
+    /* Store context pointer */
+    dev->hydrasdr_ctx = ctx;
+    dev->sample_size = ctx->sample_size;
+    dev->sample_signed = ctx->sample_signed;
+    dev->sample_format = SDR_SAMPLE_CF32;
 
     *out_dev = dev;
     return 0;
 }
 
-// the buffer sizes can't be proven to be correct
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wunknown-warning-option"
-#pragma GCC diagnostic ignored "-Wanalyzer-allocation-size"
-
-static int soapysdr_read_loop(sdr_dev_t *dev, sdr_event_cb_t cb, void *ctx, uint32_t buf_num, uint32_t buf_len)
+static int sdr_close_hydrasdr(sdr_dev_t *dev)
 {
-    size_t buffer_size = (size_t)buf_num * buf_len;
-    if (dev->buffer_size != buffer_size) {
-        free(dev->buffer);
-        dev->buffer = malloc(buffer_size);
-        if (!dev->buffer) {
-            WARN_MALLOC("soapysdr_read_loop()");
-            return -1; // NOTE: returns error on alloc failure.
-        }
-        dev->buffer_size = buffer_size;
-        dev->buffer_pos = 0;
+    if (!dev || !dev->hydrasdr_ctx)
+        return -1;
+
+    hydrasdr_ctx_t *ctx = (hydrasdr_ctx_t *)dev->hydrasdr_ctx;
+
+    /* Stop streaming if active */
+    if (ctx->streaming) {
+        ctx->streaming = 0;
+        hydrasdr_stop_rx(ctx->dev);
     }
 
-    size_t buf_elems = buf_len / dev->sample_size;
+    /* Close device */
+    if (ctx->dev) {
+        hydrasdr_close(ctx->dev);
+        ctx->dev = NULL;
+    }
 
-    dev->running = 1;
-    do {
-        if (dev->buffer_pos + buf_len > buffer_size)
-            dev->buffer_pos = 0;
-        int16_t *buffer = (void *)&dev->buffer[dev->buffer_pos];
-        dev->buffer_pos += buf_len;
+    /* Free resampler if initialized */
+    if (ctx->resampler.initialized)
+        cf32_resampler_free(&ctx->resampler);
 
-        void *buffs[]    = {buffer};
-        int flags        = 0;
-        long long timeNs = 0;
-        long timeoutUs   = 1000000; // 1 second
-        unsigned n_read  = 0, i;
-        int r;
-
-        do {
-            buffs[0] = &buffer[n_read * 2];
-            r  = SoapySDRDevice_readStream(dev->soapy_dev, dev->soapy_stream, buffs, buf_elems - n_read, &flags, &timeNs, timeoutUs);
-            if (r < 0)
-                break;
-            n_read += r; // r is number of elements read, elements=complex pairs, so buffer length is twice
-            //fprintf(stderr, "readStream ret=%d, flags=%d, timeNs=%lld (%zu - %u)\n", r, flags, timeNs, buf_elems, n_read);
-        } while (n_read < buf_elems);
-        //fprintf(stderr, "readStream ret=%u (%u), flags=%d, timeNs=%lld\n", n_read, buf_len, flags, timeNs);
-        if (r < 0) {
-            if (r == SOAPY_SDR_OVERFLOW) {
-                fprintf(stderr, "O");
-                fflush(stderr);
-                continue;
-            }
-            print_logf(LOG_WARNING, __func__, "sync read failed. %d", r);
-        }
-
-        // convert to CS16 or CU8 if needed
-        // if converting CS8 to CU8 -- vectorized with -O3
-        //for (i = 0; i < n_read * 2; ++i)
-        //    cu8buf[i] = (int8_t)cu8buf[i] + 128;
-
-        // TODO: SoapyRemote doesn't scale properly when reading (local) CS16 from (remote) CS8
-        // rescale cs16 buffer
-        if (dev->fullScale >= 2047.0 && dev->fullScale <= 2048.0) {
-            for (i = 0; i < n_read * 2; ++i)
-                buffer[i] *= 16; // prevent left shift of negative value
-        }
-        else if (dev->fullScale < 32767.0) {
-            int upscale = 32768 / dev->fullScale;
-            for (i = 0; i < n_read * 2; ++i)
-                buffer[i] *= upscale;
-        }
-
-#ifdef THREADS
-        pthread_mutex_lock(&dev->lock);
-#endif
-        uint32_t sample_rate      = dev->sample_rate;
-        uint32_t center_frequency = dev->center_frequency;
-#ifdef THREADS
-        pthread_mutex_unlock(&dev->lock);
-#endif
-        sdr_event_t ev = {
-                .ev               = SDR_EV_DATA,
-                .sample_rate      = sample_rate,
-                .center_frequency = center_frequency,
-                .buf              = buffer,
-                .len              = n_read * dev->sample_size,
-        };
-#ifdef THREADS
-        pthread_mutex_lock(&dev->lock);
-        int exit_acquire = dev->exit_acquire;
-        pthread_mutex_unlock(&dev->lock);
-        if (exit_acquire) {
-            break; // do not deliver any more events
-        }
-#endif
-        if (n_read > 0) // prevent a crash in callback
-            cb(&ev, ctx);
-
-    } while (dev->running);
+    /* Free resources */
+    free(ctx->samplerates);
+    free(ctx->buffer);
+    free(ctx);
+    dev->hydrasdr_ctx = NULL;
 
     return 0;
 }
 
-#pragma GCC diagnostic pop
+static int sdr_set_center_freq_hydrasdr(sdr_dev_t *dev, uint32_t freq, int verbose)
+{
+    if (!dev || !dev->hydrasdr_ctx)
+        return -1;
 
-#endif
+    hydrasdr_ctx_t *ctx = (hydrasdr_ctx_t *)dev->hydrasdr_ctx;
+
+    int r = hydrasdr_set_freq(ctx->dev, (uint64_t)freq);
+    if (r != HYDRASDR_SUCCESS) {
+        if (verbose)
+            print_logf(LOG_WARNING, "HydraSDR", "Failed to set frequency: %s",
+                       hydrasdr_error_name(r));
+        return -1;
+    }
+
+    ctx->current_frequency = freq;
+
+    if (verbose)
+        print_logf(LOG_NOTICE, "HydraSDR", "Tuned to %s", nice_freq(freq));
+
+    return 0;
+}
+
+static uint32_t sdr_get_center_freq_hydrasdr(sdr_dev_t *dev)
+{
+    if (!dev || !dev->hydrasdr_ctx)
+        return 0;
+
+    hydrasdr_ctx_t *ctx = (hydrasdr_ctx_t *)dev->hydrasdr_ctx;
+    return ctx->current_frequency;
+}
+
+static int sdr_set_sample_rate_hydrasdr(sdr_dev_t *dev, uint32_t rate, int verbose)
+{
+    if (!dev || !dev->hydrasdr_ctx)
+        return -1;
+
+    hydrasdr_ctx_t *ctx = (hydrasdr_ctx_t *)dev->hydrasdr_ctx;
+
+    /* Store the requested rate (what hydrasdr_433 expects) */
+    ctx->requested_samplerate = rate;
+
+    /* Find best matching rate (HydraSDR handles decimation internally) */
+    uint32_t actual_rate = hydrasdr_find_best_samplerate(ctx, rate, verbose);
+    if (actual_rate == 0) {
+        print_log(LOG_ERROR, "HydraSDR", "No valid sample rate available");
+        return -1;
+    }
+
+    int r = hydrasdr_set_samplerate(ctx->dev, actual_rate);
+    if (r != HYDRASDR_SUCCESS) {
+        if (verbose)
+            print_logf(LOG_WARNING, "HydraSDR", "Failed to set sample rate: %s",
+                       hydrasdr_error_name(r));
+        return -1;
+    }
+
+    ctx->current_samplerate = actual_rate;
+
+    /* Free old resampler if exists */
+    if (ctx->resampler.initialized) {
+        cf32_resampler_free(&ctx->resampler);
+        ctx->needs_resampling = 0;
+    }
+
+    /* Initialize polyphase resampler if rate conversion needed */
+    if (actual_rate != rate) {
+        /* Calculate max samples per callback (based on buffer size) */
+        size_t max_samples = ctx->buffer_size / ctx->sample_size;
+        if (max_samples < 16384)
+            max_samples = 16384;
+
+        r = cf32_resampler_init(&ctx->resampler, actual_rate, rate, max_samples);
+        if (r == 0) {
+            ctx->needs_resampling = 1;
+            if (verbose)
+                print_logf(LOG_NOTICE, "HydraSDR",
+                           "Polyphase resampler initialized: %u Hz -> %u Hz (L=%d, M=%d)",
+                           actual_rate, rate,
+                           ctx->resampler.up_factor, ctx->resampler.down_factor);
+        } else {
+            print_log(LOG_WARNING, "HydraSDR", "Failed to initialize resampler, using raw rate");
+            ctx->needs_resampling = 0;
+        }
+    } else {
+        ctx->needs_resampling = 0;
+    }
+
+    if (verbose)
+        print_logf(LOG_NOTICE, "HydraSDR", "Sample rate: HW=%u Hz, output=%u Hz",
+                   actual_rate, ctx->needs_resampling ? rate : actual_rate);
+
+    return 0;
+}
+
+static uint32_t sdr_get_sample_rate_hydrasdr(sdr_dev_t *dev)
+{
+    if (!dev || !dev->hydrasdr_ctx)
+        return 0;
+
+    hydrasdr_ctx_t *ctx = (hydrasdr_ctx_t *)dev->hydrasdr_ctx;
+    return ctx->current_samplerate;
+}
+
+static int sdr_set_auto_gain_hydrasdr(sdr_dev_t *dev, int verbose)
+{
+    if (!dev || !dev->hydrasdr_ctx)
+        return -1;
+
+    hydrasdr_ctx_t *ctx = (hydrasdr_ctx_t *)dev->hydrasdr_ctx;
+
+    return hydrasdr_enable_agc(ctx, verbose);
+}
+
+static int sdr_set_tuner_gain_hydrasdr(sdr_dev_t *dev, char const *gain_str, int verbose)
+{
+    if (!dev || !dev->hydrasdr_ctx)
+        return -1;
+
+    hydrasdr_ctx_t *ctx = (hydrasdr_ctx_t *)dev->hydrasdr_ctx;
+
+    int gain = atoi(gain_str);
+    if (gain == 0) {
+        /* Explicit -g 0: always enable AGC regardless of -t settings */
+        return sdr_set_auto_gain_hydrasdr(dev, verbose);
+    }
+
+    return hydrasdr_set_total_gain(ctx, gain, verbose);
+}
+
+static int sdr_apply_settings_hydrasdr(sdr_dev_t *dev, char const *sdr_settings, int verbose)
+{
+    if (!dev || !dev->hydrasdr_ctx)
+        return -1;
+
+    if (!sdr_settings || !*sdr_settings)
+        return 0;
+
+    hydrasdr_ctx_t *ctx = (hydrasdr_ctx_t *)dev->hydrasdr_ctx;
+    int r = 0;
+
+    /* Parse settings string */
+    char settings_copy[256];
+    snprintf(settings_copy, sizeof(settings_copy), "%s", sdr_settings);
+    char *settings_p = settings_copy;
+
+    char *name, *value;
+    while (getkwargs(&settings_p, &name, &value)) {
+        if (strcmp(name, "biastee") == 0 || strcmp(name, "bias_tee") == 0) {
+            if (ctx->info.features & HYDRASDR_CAP_BIAS_TEE) {
+                int bias = atobv(value, 1);
+                r = hydrasdr_set_rf_bias(ctx->dev, (uint8_t)bias);
+                if (r == HYDRASDR_SUCCESS && verbose)
+                    print_logf(LOG_NOTICE, "HydraSDR", "Bias tee %s",
+                               bias ? "enabled" : "disabled");
+            } else {
+                print_log(LOG_WARNING, "HydraSDR", "Bias tee not supported by this device");
+            }
+        } else if (strcmp(name, "decimation") == 0 || strcmp(name, "hd") == 0) {
+            int mode = atobv(value, 1);
+            r = hydrasdr_set_decimation_mode(ctx->dev,
+                mode ? HYDRASDR_DEC_MODE_HIGH_DEFINITION : HYDRASDR_DEC_MODE_LOW_BANDWIDTH);
+            if (r == HYDRASDR_SUCCESS && verbose)
+                print_logf(LOG_NOTICE, "HydraSDR", "Decimation mode: %s",
+                           mode ? "high definition (10 MSPS IQ)" : "low bandwidth");
+        } else if (strcmp(name, "bandwidth") == 0) {
+            if (ctx->info.features & HYDRASDR_CAP_BANDWIDTH) {
+                uint32_t bw = atouint32_metric(value, "-t bandwidth= ");
+                r = hydrasdr_set_bandwidth(ctx->dev, bw);
+                if (r == HYDRASDR_SUCCESS && verbose)
+                    print_logf(LOG_NOTICE, "HydraSDR", "Bandwidth set to %u Hz", bw);
+            } else {
+                print_log(LOG_WARNING, "HydraSDR", "Bandwidth control not supported");
+            }
+        } else if (strcmp(name, "lna") == 0
+                || strcmp(name, "vga") == 0
+                || strcmp(name, "mixer") == 0
+                || strcmp(name, "sensitivity") == 0
+                || strcmp(name, "linearity") == 0) {
+            /* Map setting name to gain type */
+            hydrasdr_gain_type_t type;
+            const char *label;
+            if (strcmp(name, "lna") == 0) {
+                type = HYDRASDR_GAIN_TYPE_LNA;
+                label = "LNA";
+            } else if (strcmp(name, "vga") == 0) {
+                type = HYDRASDR_GAIN_TYPE_VGA;
+                label = "VGA";
+            } else if (strcmp(name, "mixer") == 0) {
+                type = HYDRASDR_GAIN_TYPE_MIXER;
+                label = "Mixer";
+            } else if (strcmp(name, "sensitivity") == 0) {
+                type = HYDRASDR_GAIN_TYPE_SENSITIVITY;
+                label = "Sensitivity";
+            } else {
+                type = HYDRASDR_GAIN_TYPE_LINEARITY;
+                label = "Linearity";
+            }
+
+            /* Check if this gain type is actually managed */
+            int max_val = hydrasdr_get_gain_max(ctx, type);
+            if (max_val <= 0) {
+                print_logf(LOG_WARNING, "HydraSDR",
+                           "%s gain not available on this device", label);
+            } else {
+                int gain_val = atoi(value);
+                if (gain_val < 0) gain_val = 0;
+                if (gain_val > max_val) gain_val = max_val;
+                r = hydrasdr_set_gain(ctx->dev, type, (uint8_t)gain_val);
+                if (r == HYDRASDR_SUCCESS) {
+                    ctx->manual_gain_set = 1;
+                    ctx->gains_set |= (1u << type);
+                    if (verbose)
+                        print_logf(LOG_NOTICE, "HydraSDR",
+                                   "%s gain set to %d (range 0-%d)",
+                                   label, gain_val, max_val);
+                } else {
+                    print_logf(LOG_WARNING, "HydraSDR",
+                               "Failed to set %s gain: %s",
+                               label, hydrasdr_error_name(r));
+                }
+            }
+        } else {
+            print_logf(LOG_WARNING, "HydraSDR", "Unknown setting: %s", name);
+        }
+    }
+
+    return r;
+}
+
+static int sdr_start_hydrasdr(sdr_dev_t *dev, sdr_event_cb_t cb, void *ctx, uint32_t buf_num, uint32_t buf_len)
+{
+    if (!dev || !dev->hydrasdr_ctx)
+        return -1;
+
+    hydrasdr_ctx_t *hctx = (hydrasdr_ctx_t *)dev->hydrasdr_ctx;
+
+    /* Allocate buffer */
+    size_t buffer_size = (size_t)buf_num * buf_len;
+    if (hctx->buffer_size != buffer_size) {
+        free(hctx->buffer);
+        hctx->buffer = malloc(buffer_size);
+        if (!hctx->buffer) {
+            WARN_MALLOC("sdr_start_hydrasdr()");
+            return -1;
+        }
+        hctx->buffer_size = buffer_size;
+        hctx->buffer_pos = 0;
+    }
+
+    /* Store callback info */
+    hctx->cb = cb;
+    hctx->cb_ctx = ctx;
+    hctx->streaming = 1;
+
+    /* Start streaming */
+    int r = hydrasdr_start_rx(hctx->dev, hydrasdr_sample_callback, hctx);
+    if (r != HYDRASDR_SUCCESS) {
+        print_logf(LOG_ERROR, "HydraSDR", "Failed to start streaming: %s",
+                   hydrasdr_error_name(r));
+        hctx->streaming = 0;
+        free(hctx->buffer);
+        hctx->buffer = NULL;
+        hctx->buffer_size = 0;
+        return -1;
+    }
+
+    return 0;
+}
+
+static int sdr_stop_hydrasdr(sdr_dev_t *dev)
+{
+    if (!dev || !dev->hydrasdr_ctx)
+        return -1;
+
+    hydrasdr_ctx_t *ctx = (hydrasdr_ctx_t *)dev->hydrasdr_ctx;
+
+    ctx->streaming = 0;
+
+    int r = hydrasdr_stop_rx(ctx->dev);
+    if (r != HYDRASDR_SUCCESS) {
+        print_logf(LOG_WARNING, "HydraSDR", "Failed to stop streaming: %s",
+                   hydrasdr_error_name(r));
+        return -1;
+    }
+
+    return 0;
+}
+
+#endif /* HYDRASDR */
 
 /* Public API */
 
 int sdr_open(sdr_dev_t **out_dev, char const *dev_query, int verbose)
 {
+    /* rtl_tcp input (remote SDR over network) */
     if (dev_query && !strncmp(dev_query, "rtl_tcp", 7))
         return rtltcp_open(out_dev, dev_query, verbose);
 
-#if !defined(RTLSDR) && !defined(SOAPYSDR)
+#ifdef HYDRASDR
+    /* HydraSDR: use by default or if explicitly requested */
+    if (!dev_query || !strncmp(dev_query, "hydrasdr", 8) ||
+        *dev_query == ':' || (*dev_query >= '0' && *dev_query <= '9'))
+        return sdr_open_hydrasdr(out_dev, dev_query, verbose);
+#endif
+
+#if !defined(HYDRASDR)
     if (verbose)
-        print_log(LOG_ERROR, __func__, "No input drivers (RTL-SDR or SoapySDR) compiled in.");
+        print_log(LOG_ERROR, __func__, "No input drivers (HydraSDR) compiled in.");
     return -1;
 #endif
 
-    /* Open RTLSDR by default or if index or serial given, if available */
-    if (!dev_query || *dev_query == ':' || (*dev_query >= '0' && *dev_query <= '9')) {
-#ifdef RTLSDR
-        return sdr_open_rtl(out_dev, dev_query, verbose);
-#else
-        print_log(LOG_ERROR, __func__, "No input driver for RTL-SDR compiled in.");
-        return -1;
-#endif
-    }
-
-#ifdef SOAPYSDR
-    UNUSED(soapysdr_set_bandwidth);
-    UNUSED(soapysdr_direct_sampling);
-    UNUSED(soapysdr_offset_tuning);
-
-    /* Open SoapySDR otherwise, if available */
-    return sdr_open_soapy(out_dev, dev_query, verbose);
-#endif
-    print_log(LOG_ERROR, __func__, "No input driver for SoapySDR compiled in.");
-
+    print_log(LOG_ERROR, __func__, "No matching input driver found.");
     return -1;
 }
 
@@ -1107,14 +1263,9 @@ int sdr_close(sdr_dev_t *dev)
     if (dev->rtl_tcp)
         ret = rtltcp_close(dev->rtl_tcp);
 
-#ifdef SOAPYSDR
-    if (dev->soapy_dev)
-        ret = SoapySDRDevice_unmake(dev->soapy_dev);
-#endif
-
-#ifdef RTLSDR
-    if (dev->rtlsdr_dev)
-        ret = rtlsdr_close(dev->rtlsdr_dev);
+#ifdef HYDRASDR
+    if (dev->hydrasdr_ctx)
+        ret = sdr_close_hydrasdr(dev);
 #endif
 
 #ifdef THREADS
@@ -1151,6 +1302,14 @@ int sdr_get_sample_signed(sdr_dev_t *dev)
     return dev->sample_signed;
 }
 
+sdr_sample_format_t sdr_get_sample_format(sdr_dev_t *dev)
+{
+    if (!dev)
+        return SDR_SAMPLE_CU8;
+
+    return dev->sample_format;
+}
+
 int sdr_set_center_freq(sdr_dev_t *dev, uint32_t freq, int verbose)
 {
     if (!dev)
@@ -1165,30 +1324,23 @@ int sdr_set_center_freq(sdr_dev_t *dev, uint32_t freq, int verbose)
 
     int r = -1;
 
+#ifdef HYDRASDR
+    if (dev->hydrasdr_ctx) {
+        r = sdr_set_center_freq_hydrasdr(dev, freq, verbose);
+        dev->center_frequency = freq;
+        return r;
+    }
+#endif
+
     if (dev->rtl_tcp) {
         dev->rtl_tcp_freq = freq;
         r = rtltcp_command(dev, RTLTCP_SET_FREQ, freq);
-    }
-
-#ifdef SOAPYSDR
-    SoapySDRKwargs args = {0};
-    if (dev->soapy_dev) {
-        r = SoapySDRDevice_setFrequency(dev->soapy_dev, SOAPY_SDR_RX, 0, (double)freq, &args);
-    }
-#endif
-
-#ifdef RTLSDR
-    if (dev->rtlsdr_dev) {
-        r = rtlsdr_set_center_freq(dev->rtlsdr_dev, freq);
-        print_logf(LOG_DEBUG, "SDR", "rtlsdr_set_center_freq %u = %d", freq, r);
-    }
-#endif
-
-    if (verbose) {
-        if (r < 0)
-            print_log(LOG_WARNING, __func__, "Failed to set center freq.");
-        else
-            print_logf(LOG_NOTICE, "SDR", "Tuned to %s.", nice_freq(sdr_get_center_freq(dev)));
+        if (verbose) {
+            if (r < 0)
+                print_log(LOG_WARNING, __func__, "Failed to set center freq.");
+            else
+                print_logf(LOG_NOTICE, "SDR", "Tuned to %s.", nice_freq(sdr_get_center_freq(dev)));
+        }
     }
 
 #ifdef THREADS
@@ -1207,18 +1359,13 @@ uint32_t sdr_get_center_freq(sdr_dev_t *dev)
     if (!dev)
         return 0;
 
+#ifdef HYDRASDR
+    if (dev->hydrasdr_ctx)
+        return sdr_get_center_freq_hydrasdr(dev);
+#endif
+
     if (dev->rtl_tcp)
         return dev->rtl_tcp_freq;
-
-#ifdef SOAPYSDR
-    if (dev->soapy_dev)
-        return (uint32_t)SoapySDRDevice_getFrequency(dev->soapy_dev, SOAPY_SDR_RX, 0);
-#endif
-
-#ifdef RTLSDR
-    if (dev->rtlsdr_dev)
-        return rtlsdr_get_center_freq(dev->rtlsdr_dev);
-#endif
 
     return 0;
 }
@@ -1239,19 +1386,6 @@ int sdr_set_freq_correction(sdr_dev_t *dev, int ppm, int verbose)
 
     if (dev->rtl_tcp)
         r = rtltcp_command(dev, RTLTCP_SET_FREQ_CORRECTION, ppm);
-
-#ifdef SOAPYSDR
-    if (dev->soapy_dev)
-        r = SoapySDRDevice_setFrequencyComponent(dev->soapy_dev, SOAPY_SDR_RX, 0, "CORR", (double)ppm, NULL);
-#endif
-
-#ifdef RTLSDR
-    if (dev->rtlsdr_dev) {
-        r = rtlsdr_set_freq_correction(dev->rtlsdr_dev, ppm);
-        if (r == -2)
-            r = 0; // -2 is not an error code
-    }
-#endif
 
     if (verbose) {
         if (r < 0)
@@ -1276,24 +1410,31 @@ int sdr_set_auto_gain(sdr_dev_t *dev, int verbose)
 
     int r = -1;
 
-    if (dev->rtl_tcp)
+#ifdef HYDRASDR
+    if (dev->hydrasdr_ctx) {
+        hydrasdr_ctx_t *ctx = (hydrasdr_ctx_t *)dev->hydrasdr_ctx;
+        /*
+         * Default auto gain — skip AGC if manual gain was set via -t,
+         * so that e.g. "-t linearity=10" is not overridden by AGC.
+         */
+        if (ctx->manual_gain_set) {
+            if (verbose)
+                print_log(LOG_NOTICE, "HydraSDR",
+                          "Manual gain set via -t, skipping default AGC");
+            return 0;
+        }
+        return sdr_set_auto_gain_hydrasdr(dev, verbose);
+    }
+#endif
+
+    if (dev->rtl_tcp) {
         r = rtltcp_command(dev, RTLTCP_SET_GAIN_MODE, 0);
-
-#ifdef SOAPYSDR
-    if (dev->soapy_dev)
-        r = soapysdr_auto_gain(dev->soapy_dev, verbose);
-#endif
-
-#ifdef RTLSDR
-    if (dev->rtlsdr_dev)
-        r = rtlsdr_set_tuner_gain_mode(dev->rtlsdr_dev, 0);
-#endif
-
-    if (verbose) {
-        if (r < 0)
-            print_log(LOG_WARNING, __func__, "Failed to enable automatic gain.");
-        else
-            print_log(LOG_NOTICE, "SDR", "Tuner gain set to Auto.");
+        if (verbose) {
+            if (r < 0)
+                print_log(LOG_WARNING, __func__, "Failed to enable automatic gain.");
+            else
+                print_log(LOG_NOTICE, "SDR", "Tuner gain set to Auto.");
+        }
     }
     return r;
 }
@@ -1317,10 +1458,9 @@ int sdr_set_tuner_gain(sdr_dev_t *dev, char const *gain_str, int verbose)
         return sdr_set_auto_gain(dev, verbose);
     }
 
-#ifdef SOAPYSDR
-    /* Enable manual gain */
-    if (dev->soapy_dev)
-        return soapysdr_gain_str_set(dev->soapy_dev, gain_str, verbose);
+#ifdef HYDRASDR
+    if (dev->hydrasdr_ctx)
+        return sdr_set_tuner_gain_hydrasdr(dev, gain_str, verbose);
 #endif
 
     int gain = (int)(atof(gain_str) * 10); /* tenths of a dB */
@@ -1330,42 +1470,15 @@ int sdr_set_tuner_gain(sdr_dev_t *dev, char const *gain_str, int verbose)
     }
 
     if (dev->rtl_tcp) {
-        return rtltcp_command(dev, RTLTCP_SET_GAIN_MODE, 1)
+        r = rtltcp_command(dev, RTLTCP_SET_GAIN_MODE, 1)
                 || rtltcp_command(dev, RTLTCP_SET_GAIN, gain);
-    }
-
-#ifdef RTLSDR
-    /* Enable manual gain */
-    r = rtlsdr_set_tuner_gain_mode(dev->rtlsdr_dev, 1);
-    if (verbose)
-        if (r < 0)
-            print_log(LOG_WARNING, __func__, "Failed to enable manual gain.");
-
-    /* Set the tuner gain */
-    gain = rtlsdr_find_tuner_gain(dev, gain, verbose);
-
-    /* Fix for FitiPower FC0012: set gain to minimum before desired value */
-    if (rtlsdr_get_tuner_type(dev->rtlsdr_dev) == RTLSDR_TUNER_FC0012) {
-        int minGain = -99;
-        minGain = rtlsdr_find_tuner_gain(dev, minGain, verbose);
-
-        r = rtlsdr_set_tuner_gain(dev->rtlsdr_dev, minGain);
         if (verbose) {
             if (r < 0)
-                print_log(LOG_WARNING, __func__, "Failed to set initial gain.");
+                print_log(LOG_WARNING, __func__, "Failed to set tuner gain.");
             else
-                print_logf(LOG_NOTICE, "SDR", "Set initial gain for FC0012 to %f dB.", minGain / 10.0);
+                print_logf(LOG_NOTICE, "SDR", "Tuner gain set to %f dB.", gain / 10.0);
         }
     }
-
-    r = rtlsdr_set_tuner_gain(dev->rtlsdr_dev, gain);
-    if (verbose) {
-        if (r < 0)
-            print_log(LOG_WARNING, __func__, "Failed to set tuner gain.");
-        else
-            print_logf(LOG_NOTICE, "SDR", "Tuner gain set to %f dB.", gain / 10.0);
-    }
-#endif
 
     return r;
 }
@@ -1376,32 +1489,12 @@ int sdr_set_antenna(sdr_dev_t *dev, char const *antenna_str, int verbose)
         return -1;
 
     POSSIBLY_UNUSED(verbose);
-    int r = -1;
+    POSSIBLY_UNUSED(antenna_str);
 
-    if (!antenna_str)
-        return 0;
+    /* Antenna selection not supported in HydraSDR */
+    print_log(LOG_WARNING, __func__, "Antenna selection not available for HydraSDR devices");
 
-#ifdef SOAPYSDR
-    if (dev->soapy_dev) {
-        r = SoapySDRDevice_setAntenna(dev->soapy_dev, SOAPY_SDR_RX, 0, antenna_str);
-
-        if (verbose) {
-            if (r < 0)
-                print_log(LOG_WARNING, __func__, "Failed to set antenna.");
-
-            // report the antenna that is actually used
-            char *antenna = SoapySDRDevice_getAntenna(dev->soapy_dev, SOAPY_SDR_RX, 0);
-            print_logf(LOG_NOTICE, "SDR", "Antenna set to '%s'.", antenna);
-            free(antenna);
-        }
-        return r;
-    }
-#endif
-
-  // currently only SoapySDR supports devices with multiple antennas
-  print_log(LOG_WARNING, __func__, "Antenna selection only available for SoapySDR devices");
-
-  return r;
+    return -1;
 }
 
 int sdr_set_sample_rate(sdr_dev_t *dev, uint32_t rate, int verbose)
@@ -1418,26 +1511,23 @@ int sdr_set_sample_rate(sdr_dev_t *dev, uint32_t rate, int verbose)
 
     int r = -1;
 
+#ifdef HYDRASDR
+    if (dev->hydrasdr_ctx) {
+        r = sdr_set_sample_rate_hydrasdr(dev, rate, verbose);
+        dev->sample_rate = sdr_get_sample_rate_hydrasdr(dev);
+        return r;
+    }
+#endif
+
     if (dev->rtl_tcp) {
         dev->rtl_tcp_rate = rate;
         r = rtltcp_command(dev, RTLTCP_SET_SAMPLE_RATE, rate);
-    }
-
-#ifdef SOAPYSDR
-    if (dev->soapy_dev)
-        r = SoapySDRDevice_setSampleRate(dev->soapy_dev, SOAPY_SDR_RX, 0, (double)rate);
-#endif
-
-#ifdef RTLSDR
-    if (dev->rtlsdr_dev)
-        r = rtlsdr_set_sample_rate(dev->rtlsdr_dev, rate);
-#endif
-
-    if (verbose) {
-        if (r < 0)
-            print_log(LOG_WARNING, __func__, "Failed to set sample rate.");
-        else
-            print_logf(LOG_NOTICE, "SDR", "Sample rate set to %u S/s.", sdr_get_sample_rate(dev)); // Unfortunately, doesn't return real rate
+        if (verbose) {
+            if (r < 0)
+                print_log(LOG_WARNING, __func__, "Failed to set sample rate.");
+            else
+                print_logf(LOG_NOTICE, "SDR", "Sample rate set to %u S/s.", sdr_get_sample_rate(dev));
+        }
     }
 
 #ifdef THREADS
@@ -1456,18 +1546,13 @@ uint32_t sdr_get_sample_rate(sdr_dev_t *dev)
     if (!dev)
         return 0;
 
+#ifdef HYDRASDR
+    if (dev->hydrasdr_ctx)
+        return sdr_get_sample_rate_hydrasdr(dev);
+#endif
+
     if (dev->rtl_tcp)
         return dev->rtl_tcp_rate;
-
-#ifdef SOAPYSDR
-    if (dev->soapy_dev)
-        return (uint32_t)SoapySDRDevice_getSampleRate(dev->soapy_dev, SOAPY_SDR_RX, 0);
-#endif
-
-#ifdef RTLSDR
-    if (dev->rtlsdr_dev)
-        return rtlsdr_get_sample_rate(dev->rtlsdr_dev);
-#endif
 
     return 0;
 }
@@ -1483,10 +1568,15 @@ int sdr_apply_settings(sdr_dev_t *dev, char const *sdr_settings, int verbose)
     if (!sdr_settings || !*sdr_settings)
         return 0;
 
+#ifdef HYDRASDR
+    if (dev->hydrasdr_ctx)
+        return sdr_apply_settings_hydrasdr(dev, sdr_settings, verbose);
+#endif
+
     if (dev->rtl_tcp) {
         while (sdr_settings && *sdr_settings) {
             char const *val = NULL;
-            // This mirrors the settings of SoapyRTLSDR
+            // rtl_tcp settings
             if (kwargs_match(sdr_settings, "direct_samp", &val)) {
                 int direct_sampling = atoiv(val, 1);
                 r = rtltcp_command(dev, RTLTCP_SET_DIRECT_SAMPLING, direct_sampling);
@@ -1512,84 +1602,109 @@ int sdr_apply_settings(sdr_dev_t *dev, char const *sdr_settings, int verbose)
         return r;
     }
 
-#ifdef SOAPYSDR
-    if (dev->soapy_dev) {
-        SoapySDRKwargs settings = SoapySDRKwargs_fromString(sdr_settings);
-        for (size_t i = 0; i < settings.size; ++i) {
-            const char *key   = settings.keys[i];
-            const char *value = settings.vals[i];
-            if (!key) {
-                continue;
-            }
-            if (verbose) {
-                print_logf(LOG_NOTICE, "SDR", "Setting %s to %s", key, value);
-            }
-            if (!strcmp(key, "antenna")) {
-                if (SoapySDRDevice_setAntenna(dev->soapy_dev, SOAPY_SDR_RX, 0, value) != 0) {
-                    r = -1;
-                    print_logf(LOG_WARNING, __func__, "Antenna setting failed: %s", SoapySDRDevice_lastError());
-                }
-            }
-            else if (!strcmp(key, "bandwidth")) {
-                uint32_t f_value = atouint32_metric(value, "-t bandwidth= ");
-                if (SoapySDRDevice_setBandwidth(dev->soapy_dev, SOAPY_SDR_RX, 0, (double)f_value) != 0) {
-                    r = -1;
-                    print_logf(LOG_WARNING, __func__, "Bandwidth setting failed: %s", SoapySDRDevice_lastError());
-                }
-            }
-            else {
-                if (SoapySDRDevice_writeSetting(dev->soapy_dev, key, value) != 0) {
-                    r = -1;
-                    print_logf(LOG_WARNING, __func__, "sdr setting failed: %s", SoapySDRDevice_lastError());
-                }
-            }
-        }
-        SoapySDRKwargs_clear(&settings);
-        return r;
-    }
-#endif
-
-#ifdef RTLSDR
-    if (dev->rtlsdr_dev) {
-        while (sdr_settings && *sdr_settings) {
-            char const *val = NULL;
-            // This mirrors the settings of SoapyRTLSDR
-            if (kwargs_match(sdr_settings, "direct_samp", &val)) {
-                int direct_sampling = atoiv(val, 1);
-                r = rtlsdr_set_direct_sampling(dev->rtlsdr_dev, direct_sampling);
-            }
-            else if (kwargs_match(sdr_settings, "offset_tune", &val)) {
-                int offset_tuning = atobv(val, 1);
-                r = rtlsdr_set_offset_tuning(dev->rtlsdr_dev, offset_tuning);
-            }
-            else if (kwargs_match(sdr_settings, "digital_agc", &val)) {
-                int digital_agc = atobv(val, 1);
-                r = rtlsdr_set_agc_mode(dev->rtlsdr_dev, digital_agc);
-            }
-            else if (kwargs_match(sdr_settings, "biastee", &val)) {
-#if defined(__linux__) && (defined(__GNUC__) || defined(__clang__))
-                // check weak link for Linux with older rtlsdr
-                if (!rtlsdr_set_bias_tee) {
-                    print_log(LOG_ERROR, __func__, "This librtlsdr version does not support biastee setting");
-                    return -1;
-                }
-#endif
-                int biastee = atobv(val, 1);
-                r = rtlsdr_set_bias_tee(dev->rtlsdr_dev, biastee);
-            }
-            else {
-                print_logf(LOG_ERROR, __func__, "Unknown RTLSDR setting: %s", sdr_settings);
-                return -1;
-            }
-            sdr_settings = kwargs_skip(sdr_settings);
-        }
-        return r;
-    }
-#endif
-
     print_log(LOG_WARNING, __func__, "sdr settings not available."); // no open device
 
     return -1;
+}
+
+/**
+ * AGC-to-stage mapping table.
+ * Maps each AGC gain type to the stage it controls.
+ * Add entries here when new AGC types are added to the firmware.
+ */
+static const struct {
+    hydrasdr_gain_type_t agc_type;
+    hydrasdr_gain_type_t stage_type;
+} agc_stage_map[] = {
+    { HYDRASDR_GAIN_TYPE_LNA_AGC,   HYDRASDR_GAIN_TYPE_LNA },
+    { HYDRASDR_GAIN_TYPE_MIXER_AGC, HYDRASDR_GAIN_TYPE_MIXER },
+};
+
+/**
+ * Check if a gain stage is under AGC control.
+ * Uses the locally tracked agc_enabled bitmask (set by hydrasdr_enable_agc).
+ */
+static int hydrasdr_stage_has_agc_on(hydrasdr_ctx_t *ctx, hydrasdr_gain_type_t stage_type)
+{
+    for (int i = 0; i < (int)(sizeof(agc_stage_map) / sizeof(agc_stage_map[0])); i++) {
+        if (agc_stage_map[i].stage_type == stage_type
+                && (ctx->agc_enabled & (1u << agc_stage_map[i].agc_type)))
+            return 1;
+    }
+    return 0;
+}
+
+void sdr_show_gain_state(sdr_dev_t *dev)
+{
+    if (!dev)
+        return;
+
+#ifdef HYDRASDR
+    if (dev->hydrasdr_ctx) {
+        hydrasdr_ctx_t *ctx = (hydrasdr_ctx_t *)dev->hydrasdr_ctx;
+
+        static const struct {
+            hydrasdr_gain_type_t type;
+            const char *name;
+        } stage_types[] = {
+            { HYDRASDR_GAIN_TYPE_LNA,    "LNA" },
+            { HYDRASDR_GAIN_TYPE_RF,     "RF" },
+            { HYDRASDR_GAIN_TYPE_MIXER,  "Mixer" },
+            { HYDRASDR_GAIN_TYPE_FILTER, "Filter" },
+            { HYDRASDR_GAIN_TYPE_VGA,    "VGA" },
+        };
+
+        /*
+         * Apply midpoint default for gains not explicitly set.
+         * Stages under AGC are left alone. For manual-only stages
+         * (e.g. VGA which has no AGC), the firmware power-on default
+         * is often max — set to midpoint for a balanced starting point.
+         */
+        for (int i = 0; i < (int)(sizeof(stage_types) / sizeof(stage_types[0])); i++) {
+            hydrasdr_gain_type_t t = stage_types[i].type;
+            int max_val = hydrasdr_get_gain_max(ctx, t);
+            if (max_val <= 0)
+                continue;
+            if (ctx->gains_set & (1u << t))
+                continue; /* explicitly set */
+            if (hydrasdr_stage_has_agc_on(ctx, t))
+                continue; /* AGC controls it */
+
+            int mid = (max_val + 1) / 2;
+            if (hydrasdr_set_gain(ctx->dev, t, (uint8_t)mid) == HYDRASDR_SUCCESS)
+                ctx->gains_set |= (1u << t);
+        }
+
+        /* Print effective per-stage gains */
+        fprintf(stderr, "[HydraSDR] Active gain: ");
+        int first = 1;
+        for (int i = 0; i < (int)(sizeof(stage_types) / sizeof(stage_types[0])); i++) {
+            int max_val = hydrasdr_get_gain_max(ctx, stage_types[i].type);
+            int has_agc = hydrasdr_stage_has_agc_on(ctx, stage_types[i].type);
+
+            /* Show stage if it has manual range OR AGC is active */
+            if (max_val <= 0 && !has_agc)
+                continue;
+
+            if (has_agc) {
+                /* AGC is controlling this stage — value is dynamic */
+                fprintf(stderr, "%s%s=AGC",
+                        first ? "" : ", ", stage_types[i].name);
+            } else {
+                /* Manual or midpoint default — show fixed value */
+                hydrasdr_gain_info_t gi;
+                if (hydrasdr_get_gain(ctx->dev, stage_types[i].type, &gi) != HYDRASDR_SUCCESS)
+                    continue;
+                fprintf(stderr, "%s%s=%d/%d",
+                        first ? "" : ", ", stage_types[i].name,
+                        gi.value, max_val);
+            }
+            first = 0;
+        }
+        fprintf(stderr, "\n");
+        return;
+    }
+#endif
 }
 
 int sdr_activate(sdr_dev_t *dev)
@@ -1597,15 +1712,7 @@ int sdr_activate(sdr_dev_t *dev)
     if (!dev)
         return -1;
 
-#ifdef SOAPYSDR
-    if (dev->soapy_dev) {
-        if (SoapySDRDevice_activateStream(dev->soapy_dev, dev->soapy_stream, 0, 0, 0) != 0) {
-            print_log(LOG_ERROR, __func__, "Failed to activate stream");
-            exit(1);
-        }
-    }
-#endif
-
+    /* HydraSDR doesn't need explicit stream activation */
     return 0;
 }
 
@@ -1614,13 +1721,7 @@ int sdr_deactivate(sdr_dev_t *dev)
     if (!dev)
         return -1;
 
-#ifdef SOAPYSDR
-    if (dev->soapy_dev) {
-        SoapySDRDevice_deactivateStream(dev->soapy_dev, dev->soapy_stream, 0, 0);
-        SoapySDRDevice_closeStream(dev->soapy_dev, dev->soapy_stream);
-    }
-#endif
-
+    /* HydraSDR doesn't need explicit stream deactivation */
     return 0;
 }
 
@@ -1629,18 +1730,10 @@ int sdr_reset(sdr_dev_t *dev, int verbose)
     if (!dev)
         return -1;
 
-    int r = 0;
+    POSSIBLY_UNUSED(verbose);
 
-#ifdef RTLSDR
-    if (dev->rtlsdr_dev)
-        r = rtlsdr_reset_buffer(dev->rtlsdr_dev);
-#endif
-
-    if (verbose) {
-        if (r < 0)
-            print_log(LOG_WARNING, __func__, "Failed to reset buffers.");
-    }
-    return r;
+    /* HydraSDR doesn't need buffer reset */
+    return 0;
 }
 
 int sdr_start_sync(sdr_dev_t *dev, sdr_event_cb_t cb, void *ctx, uint32_t buf_num, uint32_t buf_len)
@@ -1653,18 +1746,13 @@ int sdr_start_sync(sdr_dev_t *dev, sdr_event_cb_t cb, void *ctx, uint32_t buf_nu
     if (buf_len == 0)
         buf_len = SDR_DEFAULT_BUF_LENGTH;
 
+#ifdef HYDRASDR
+    if (dev->hydrasdr_ctx)
+        return sdr_start_hydrasdr(dev, cb, ctx, buf_num, buf_len);
+#endif
+
     if (dev->rtl_tcp)
         return rtltcp_read_loop(dev, cb, ctx, buf_num, buf_len);
-
-#ifdef SOAPYSDR
-    if (dev->soapy_dev)
-        return soapysdr_read_loop(dev, cb, ctx, buf_num, buf_len);
-#endif
-
-#ifdef RTLSDR
-    if (dev->rtlsdr_dev)
-        return rtlsdr_read_loop(dev, cb, ctx, buf_num, buf_len);
-#endif
 
     return -1;
 }
@@ -1674,41 +1762,22 @@ int sdr_stop_sync(sdr_dev_t *dev)
     if (!dev)
         return -1;
 
+#ifdef HYDRASDR
+    if (dev->hydrasdr_ctx)
+        return sdr_stop_hydrasdr(dev);
+#endif
+
     if (dev->rtl_tcp) {
         dev->running = 0;
         return 0;
     }
 
-#ifdef SOAPYSDR
-    if (dev->soapy_dev) {
-        dev->running = 0;
-        return 0;
-    }
-#endif
-
-#ifdef RTLSDR
-    if (dev->rtlsdr_dev) {
-        dev->running = 0;
-        return rtlsdr_cancel_async(dev->rtlsdr_dev);
-    }
-#endif
-
     return -1;
 }
 
-#ifdef SOAPYSDR
-static void soapysdr_log_handler(const SoapySDRLogLevel level, const char *message)
-{
-    // Our log levels are compatible with SoapySDR.
-    print_log((log_level_t)level, "SoapySDR", message);
-}
-#endif
-
 void sdr_redirect_logging(void)
 {
-#ifdef SOAPYSDR
-    SoapySDR_registerLogHandler(soapysdr_log_handler);
-#endif
+    /* No-op: HydraSDR/libhydrasdr uses its own logging */
 }
 
 /* threading */
@@ -1780,7 +1849,7 @@ int sdr_stop(sdr_dev_t *dev)
         print_log(LOG_DEBUG, __func__, "Already exiting.");
         return 0;
     }
-    dev->exit_acquire = 1; // for rtl_tcp and SoapySDR
+    dev->exit_acquire = 1; // for rtl_tcp
     sdr_stop_sync(dev); // for rtlsdr
     pthread_mutex_unlock(&dev->lock);
 
@@ -1801,7 +1870,7 @@ int sdr_start(sdr_dev_t *dev, sdr_event_cb_t cb, void *ctx, uint32_t buf_num, ui
     UNUSED(ctx);
     UNUSED(buf_num);
     UNUSED(buf_len);
-    print_log(LOG_ERROR, __func__, "rtl_433 compiled without thread support, SDR inputs not available.");
+    print_log(LOG_ERROR, __func__, "hydrasdr_433 compiled without thread support, SDR inputs not available.");
     return -1;
 }
 int sdr_stop(sdr_dev_t *dev)

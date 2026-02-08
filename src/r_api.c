@@ -1,5 +1,5 @@
 /** @file
-    Generic RF data receiver and decoder for ISM band devices using RTL-SDR and SoapySDR.
+    Generic RF data receiver and decoder for ISM band devices for HydraSDR.
 
     Copyright (C) 2019 Christian W. Zuckschwerdt <zany@triq.net>
 
@@ -20,6 +20,7 @@
 #include "r_util.h"
 #include "rtl_433.h"
 #include "r_private.h"
+#include "channelizer.h"
 #include "rtl_433_devices.h"
 #include "r_device.h"
 #include "pulse_slicer.h"
@@ -66,7 +67,7 @@
 
 char const *version_string(void)
 {
-    return "rtl_433"
+    return "hydrasdr_433"
 #ifdef GIT_VERSION
 #define STR_VALUE(arg) #arg
 #define STR_EXPAND(s) STR_VALUE(s)
@@ -83,11 +84,8 @@ char const *version_string(void)
             " version unknown"
 #endif
             " inputs file rtl_tcp"
-#ifdef RTLSDR
-            " RTL-SDR"
-#endif
-#ifdef SOAPYSDR
-            " SoapySDR"
+#ifdef HYDRASDR
+            " HydraSDR"
 #endif
 #ifdef OPENSSL
             " with TLS"
@@ -237,6 +235,41 @@ void r_free_cfg(r_cfg_t *cfg)
     pulse_detect_free(cfg->demod->pulse_detect);
     cfg->demod->pulse_detect = NULL;
 
+    /* Free per-channel wideband state */
+    if (cfg->demod->wb_pulse_detect) {
+        for (int i = 0; i < cfg->demod->wideband_channels_allocated; i++) {
+            if (cfg->demod->wb_pulse_detect[i])
+                pulse_detect_free(cfg->demod->wb_pulse_detect[i]);
+        }
+        free(cfg->demod->wb_pulse_detect);
+        cfg->demod->wb_pulse_detect = NULL;
+    }
+    free(cfg->demod->wb_lowpass_filter_state);
+    cfg->demod->wb_lowpass_filter_state = NULL;
+    free(cfg->demod->wb_demod_FM_state);
+    cfg->demod->wb_demod_FM_state = NULL;
+    free(cfg->demod->wb_noise_level);
+    cfg->demod->wb_noise_level = NULL;
+    free(cfg->demod->wb_min_level_auto);
+    cfg->demod->wb_min_level_auto = NULL;
+    if (cfg->demod->wb_resamplers) {
+        for (int i = 0; i < cfg->demod->wideband_channels_allocated; i++)
+            cf32_resampler_free(&cfg->demod->wb_resamplers[i]);
+        free(cfg->demod->wb_resamplers);
+        cfg->demod->wb_resamplers = NULL;
+    }
+    free(cfg->demod->wb_pulse_data);
+    cfg->demod->wb_pulse_data = NULL;
+    free(cfg->demod->wb_fsk_pulse_data);
+    cfg->demod->wb_fsk_pulse_data = NULL;
+    free(cfg->demod->wb_am_bufs);
+    cfg->demod->wb_am_bufs = NULL;
+    free(cfg->demod->wb_fm_bufs);
+    cfg->demod->wb_fm_bufs = NULL;
+    free(cfg->demod->wb_temp_bufs);
+    cfg->demod->wb_temp_bufs = NULL;
+    cfg->demod->wb_buf_len = 0;
+
     list_free_elems(&cfg->raw_handler, (list_elem_free_fn)raw_output_free);
 
     r_logger_set_log_handler(NULL, NULL);
@@ -256,6 +289,13 @@ void r_free_cfg(r_cfg_t *cfg)
     mg_mgr_free(cfg->mgr);
     free(cfg->mgr);
     cfg->mgr = NULL;
+
+    /* Free wideband channelizer */
+    if (cfg->channelizer) {
+        channelizer_free(cfg->channelizer);
+        free(cfg->channelizer);
+        cfg->channelizer = NULL;
+    }
 
     //free(cfg);
 }
@@ -346,9 +386,11 @@ void calc_rssi_snr(r_cfg_t *cfg, pulse_data_t *pulse_data)
     pulse_data->freq1_hz = (foffs1 + cfg->center_frequency);
     pulse_data->freq2_hz = (foffs2 + cfg->center_frequency);
     pulse_data->centerfreq_hz = cfg->center_frequency;
-    pulse_data->depth_bits    = cfg->demod->sample_size * 4;
+    /* CU8: 2*4=8, CS16: 4*4=16, CF32: float32 mantissa=24 bits */
+    pulse_data->depth_bits    = cfg->demod->sample_size == SDR_SAMPLE_SIZE_CF32
+                                ? 24 : cfg->demod->sample_size * 4;
     // NOTE: for (CU8) amplitude is 10x (because it's squares)
-    if (cfg->demod->sample_size == 2 && !cfg->demod->use_mag_est) { // amplitude (CU8)
+    if (cfg->demod->sample_size == SDR_SAMPLE_SIZE_CU8 && !cfg->demod->use_mag_est) { // amplitude (CU8)
         pulse_data->range_db = 42.1442f; // 10*log10f(16384.0f) == 20*log10f(128.0f)
         pulse_data->rssi_db  = 10.0f * log10f(ook_high_estimate) - 42.1442f; // 10*log10f(16384.0f)
         pulse_data->noise_db = 10.0f * log10f(ook_low_estimate) - 42.1442f; // 10*log10f(16384.0f)

@@ -79,12 +79,19 @@ void pulse_detect_fsk_classic(pulse_detect_fsk_t *s, int16_t fm_n, pulse_data_t 
                 }
                 // Else rewind to last gap
                 else {
-                    s->fsk_pulse_length += fsk_pulses->gap[fsk_pulses->num_pulses-1];    // Restore counter
-                    fsk_pulses->num_pulses -= 1;        // Rewind one pulse
-                    // Are we back to initial frequency? (Was initial frequency a gap?)
-                    if ((fsk_pulses->num_pulses == 0) && (fsk_pulses->pulse[0] == 0)) {
-                        s->fm_f1_est = s->fm_f2_est;    // Switch back estimates
+                    if (fsk_pulses->num_pulses > 0) {
+                        s->fsk_pulse_length += fsk_pulses->gap[fsk_pulses->num_pulses-1];    // Restore counter
+                        fsk_pulses->num_pulses -= 1;        // Rewind one pulse
+                        // Are we back to initial frequency? (Was initial frequency a gap?)
+                        if ((fsk_pulses->num_pulses == 0) && (fsk_pulses->pulse[0] == 0)) {
+                            s->fm_f1_est = s->fm_f2_est;    // Switch back estimates
+                            s->fsk_state = PD_FSK_STATE_INIT;
+                        }
+                    }
+                    else {
+                        // Can't rewind - reset state machine
                         s->fsk_state = PD_FSK_STATE_INIT;
+                        s->fsk_pulse_length = 0;
                     }
                 }
             }

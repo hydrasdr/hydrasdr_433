@@ -25,6 +25,7 @@
 #endif
 
 #include "samp_grab.h"
+#include "sdr.h"
 #include "fatal.h"
 
 samp_grab_t *samp_grab_create(unsigned size)
@@ -97,7 +98,8 @@ void samp_grab_write(samp_grab_t *g, unsigned grab_len, unsigned grab_end)
     char f_name[64] = {0};
     FILE *fp;
 
-    char *format = *g->sample_size == 2 ? "cu8" : "cs16";
+    char *format = *g->sample_size == SDR_SAMPLE_SIZE_CU8 ? "cu8" :
+                   *g->sample_size == SDR_SAMPLE_SIZE_CS16 ? "cs16" : "cf32";
     double freq_mhz = *g->frequency / 1000000.0;
     double rate_khz = *g->samp_rate / 1000.0;
     while (1) {

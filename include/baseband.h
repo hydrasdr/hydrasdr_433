@@ -33,6 +33,13 @@ float magnitude_true_cu8(uint8_t const *iq_buf, uint16_t *y_buf, uint32_t len);
 float magnitude_est_cs16(int16_t const *iq_buf, uint16_t *y_buf, uint32_t len);
 float magnitude_true_cs16(int16_t const *iq_buf, uint16_t *y_buf, uint32_t len);
 
+/** CF32 (Complex Float32 IQ) magnitude functions for HydraSDR.
+    Input is interleaved float32 IQ pairs in range [-1.0, 1.0].
+    Output is scaled to match CU8/CS16 magnitude range (fs 16384).
+*/
+float magnitude_est_cf32(float const *iq_buf, uint16_t *y_buf, uint32_t len);
+float magnitude_true_cf32(float const *iq_buf, uint16_t *y_buf, uint32_t len);
+
 #define AMP_TO_DB(x) (10.0f * ((x) > 0 ? log10f(x) : 0) - 42.1442f)  // 10*log10f(16384.0f)
 #define MAG_TO_DB(x) (20.0f * ((x) > 0 ? log10f(x) : 0) - 84.2884f)  // 20*log10f(16384.0f)
 #ifdef __exp10f
@@ -136,6 +143,12 @@ void baseband_demod_FM(demodfm_state_t *state, uint8_t const *x_buf, int16_t *y_
 
 /// For evaluation.
 void baseband_demod_FM_cs16(demodfm_state_t *state, int16_t const *x_buf, int16_t *y_buf, unsigned long num_samples, uint32_t samp_rate, float low_pass);
+
+/** FM demodulator for CF32 samples (HydraSDR native format).
+    Input: interleaved float32 I/Q in range [-1.0, 1.0]
+    Provides highest quality FM demodulation for native HydraSDR data.
+*/
+void baseband_demod_FM_cf32(demodfm_state_t *state, float const *x_buf, int16_t *y_buf, unsigned long num_samples, uint32_t samp_rate, float low_pass);
 
 /** Initialize tables and constants.
     Should be called once at startup.

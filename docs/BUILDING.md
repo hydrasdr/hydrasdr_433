@@ -1,222 +1,273 @@
-# Building rtl_433
+# Building hydrasdr_433
 
-rtl_433 currently supports these input types:
-* [RTL-SDR](http://sdr.osmocom.org/trac/wiki/rtl-sdr) (optional, recommended)
+hydrasdr_433 is a fork of rtl_433 with native HydraSDR support and wideband scanning capabilities.
+
+## Supported Input Types
+
+* [HydraSDR](https://hydrasdr.com/) (recommended for wideband scanning)
+* [RTL-SDR](http://sdr.osmocom.org/trac/wiki/rtl-sdr) (optional)
 * [SoapySDR](https://github.com/pothosware/SoapySDR/wiki) (optional)
-* files: CU8, CS16, CF32 I/Q data, U16 AM data (built-in)
+* Files: CU8, CS16, CF32 I/Q data, U16 AM data (built-in)
 * rtl_tcp remote data servers (built-in)
 
-Building rtl_433 with RTL-SDR or SoapySDR support is optional but using RTL-SDR is highly recommended.
-The libraries and header files for RTL-SDR and/or SoapySDR should be installed beforehand.
+## Prerequisites
 
-## Nightly builds
+* CMake 3.16 or later
+* C99 compiler (GCC, Clang, or MSVC)
+* HydraSDR library v1.1.0 (local build required)
+* Optional: librtlsdr, SoapySDR libraries
 
-Some distributions offer nightly builds.
+## HydraSDR Library
 
-### openSUSE
+HydraSDR v1.1.0 must be built locally before building hydrasdr_433. The library path is specified with `-DHYDRASDR_DIR`.
 
-openSUSE users of at least Leap 42.3 or Tumbleweed can add the repository with daily builds:
-
-    $ sudo zypper addrepo -f obs://home:mnhauke:rtl_433:nightly/rtl_433
-    rtl_433-nightly
-    $ sudo zypper install rtl_433
-
-The usual update mechanism will now keep the rtl_433 version current.
-
-### Fedora
-
-Fedora users (38, 39 and Rawhide) can add the following copr repository to get nightly builds:
-
-    $ sudo dnf copr enable tvass/rtl_433
-    $ sudo dnf install rtl_433
-
-The usual update mechanism will now keep the rtl_433 version current.
-
-## Linux / Mac OS X
-
-Depending on your system, you may need to install the following libraries.
-
-Debian:
-
-````
-sudo apt-get install libtool libusb-1.0-0-dev librtlsdr-dev rtl-sdr build-essential cmake pkg-config
-````
-
-* If you require TLS connections, also install `libssl-dev` (`sudo apt-get install libssl-dev`).
-
-Centos/Fedora/RHEL with EPEL repo using cmake:
-
-  * If `dnf` doesn't exist, use `yum`.
-  * If you require TLS connections, install `openssl-devel`.
-
-````
-sudo dnf install libtool libusb1-devel rtl-sdr-devel rtl-sdr cmake
-````
-
-Mac OS X with MacPorts:
-
-* If you require TLS connections, install `openssl` from either MacPorts or Homebrew.
-
-````
-sudo port install rtl-sdr cmake
-````
-
-Mac OS X with Homebrew:
-
-    brew install rtl-sdr cmake pkg-config
-
-### CMake
-
-Get the `rtl_433` git repository if needed:
-
-    git clone https://github.com/merbanan/rtl_433.git
-
-Installation using CMake and Make (commonly available):
-
-    cd rtl_433/
-    cmake -B build
-    cmake --build build --target install
-
-Installation using CMake and Ninja (newer and faster):
-
-    cd rtl_433/
-    cmake -DFORCE_COLORED_BUILD:BOOL=ON -GNinja -B build
-    cmake --build build -j 4
-    cmake --build build --target install
-
-If installing to a global prefix (e.g. the default `/usr/local`) then instead run `make install` with privileges, .i.e.
-
-    sudo cmake --build build --target install
-
-Use CMake with `-DENABLE_SOAPYSDR=ON` (default: `AUTO`) to require SoapySDR (e.g. with Debian needs the package `libsoapysdr-dev`), use `-DENABLE_RTLSDR=OFF` (default: `ON`) to disable RTL-SDR if needed.
-E.g. use:
-
-    cmake -DENABLE_SOAPYSDR=ON ..
-
-::: tip
-If you use CMake older than 3.13 (check `cmake --version`), you need to build using e.g. `mkdir build ; cd build ; cmake .. && cmake --build .`
-:::
-
-::: tip
-In CMake 3.6 or older the OpenSSL search seems broken, you need to use `cmake -DENABLE_OPENSSL=NO ..`
-:::
-
-::: warning
-If you experience trouble with SoapySDR when compiling or running: you likely mixed version 0.7 and version 0.8 headers and libs.
-Purge all SoapySDR packages and source installation from /usr/local.
-Then install only from packages (version 0.7) or only from source (version 0.8).
-:::
-
-## Package maintainers
-
-To properly configure builds without relying on automatic feature detection you should set all options explicitly, e.g.
-
-    cmake -DENABLE_RTLSDR=ON -DENABLE_SOAPYSDR=ON -DENABLE_OPENSSL=ON -DBUILD_DOCUMENTATION=OFF -DCMAKE_BUILD_TYPE=Release -GNinja -B build
-    cmake --build build -j 10
-    DESTDIR=/tmp/destdir cmake --build build --target install
-
-## Windows
-
-### Visual Studio 2017
-
-You need [PothosSDR](https://downloads.myriadrf.org/builds/PothosSDR/) installed to get RTL-SDR and SoapySDR libraries.
-Any recent version should work, e.g. [2021.07.25-vc16](https://downloads.myriadrf.org/builds/PothosSDR/PothosSDR-2021.07.25-vc16-x64.exe).
-
-When installing PothosSDR choose "Add PothosSDR to the system PATH for the current user".
-
-For TLS support (mqtts and influxs) you need OpenSSL installed.
-E.g. [install Chocolatey](https://chocolatey.org/install) then open a Command Prompt and
-
-    choco install openssl
-
-Clone the project, e.g. open Visual Studio, change to "Team Explorer" > "Projects" > "Manage Connections" > "Clone"
-and enter `https://github.com/merbanan/rtl_433.git`
-
-If you want to change options, in the menu select "CMake" > "Change CMake Settings" > "rtl433", select e.g. "x64-Release", change e.g.
-
-    "buildRoot": "${workspaceRoot}\\build",
-    "installRoot": "${workspaceRoot}\\install",
-
-To start a build use in the menu e.g. "CMake" > "Build all"
-
-Or build at the Command Prompt without opening Visual Studio. Clone rtl_433 sources, then
-
-    cd rtl_433
-    cmake -G "Visual Studio 15 2017 Win64" -B build
-    cmake --build build
-
-### MinGW-w64
-
-You'll probably want librtlsdr and libusb.
-
-libusb has prebuilt binaries for windows,
-librtlsdr needs to be built (or extracted from the PothosSDR installer)
-
-#### librtlsdr
-
-taken and adapted from here: https://www.onetransistor.eu/2017/03/compile-librtlsdr-windows-mingw.html
-
-* install [MinGW-w64](https://mingw-w64.org/) and [CMake](https://cmake.org/)
-    * it's easiest if you select the option to include CMake in your path, otherwise you'll need to do this manually
-* download the libusb binaries from https://sourceforge.net/projects/libusb/files/libusb-1.0/ or from https://libusb.info/
-    * take the latest release and then download the .7z file, the other file contains the sources (or 'windows binaries' on the .info website)
-* extract the archive and open the extracted folder
-* copy the contents of the include folder to `<mingw_installation_folder>/include`
-* copy the `mingw64/dll/libusb-1.0.dll.a` file to `<mingw_installation_folder>/lib
-* copy the `mingw64/dll/libusb-1.0.dll` file to `<mingw_installation_folder>/bin`
-* download the source code of librtlsdr https://github.com/steve-m/librtlsdr
-* go into the librtlsdr folder
-* open CMakeLists.txt with an editor that knows unix line endings
-* go to `# Find build dependencies` (around line 65) and comment/remove the line with `find_package(Threads)`
-* add the following lines instead:
-
+Example path structure (using `hydrasdr-host`):
 ```
-SET(CMAKE_THREAD_LIBS_INIT "-lpthread")
-SET(CMAKE_HAVE_THREADS_LIBRARY 1)
-SET(Threads_FOUND TRUE)
+C:\hydrasdr-host
+├── build_mingw64/          # MinGW64 build
+│   └── libhydrasdr/src/
+│       └── libhydrasdr.dll.a
+└── build_VS2022/           # Visual Studio 2022 build
+    └── libhydrasdr/src/Release/
+        └── hydrasdr.lib
 ```
 
-* go into the cmake/modules folder and open FindLibUSB.cmake with a text editor
-* find the lines with the following text in them
+## Windows Build
 
+Two build configurations are supported on Windows:
+
+### MinGW64 Build (build_mingw64)
+
+Uses GCC compiler via MSYS2/MinGW64. Recommended for development.
+
+```bash
+# Open MINGW64 terminal from MSYS2
+
+# Install dependencies
+pacman -S mingw-w64-x86_64-toolchain mingw-w64-x86_64-cmake \
+    mingw-w64-x86_64-ninja mingw-w64-x86_64-openssl mingw-w64-x86_64-libusb
+
+# Clone and build
+git clone https://github.com/hydrasdr/hydrasdr_433.git
+cd hydrasdr_433
+cmake -B build_mingw64 -G Ninja \
+    -DHYDRASDR_DIR="C:/hydrasdr-host"
+ninja -C build_mingw64
+
+# Run tests
+./build_mingw64/external/hydrasdr-lfft/lfft_test.exe
+./build_mingw64/tests/channelizer-bench.exe
 ```
-/usr/include/libusb-1.0
-/usr/include
-/usr/local/include
+
+**Output:**
+```
+build_mingw64/src/
+├── hydrasdr_433.exe
+├── libhydrasdr.dll      # Copied automatically
+├── libusb-1.0.dll       # Copied automatically
+├── libcrypto-3-x64.dll  # Copied automatically (OpenSSL)
+└── libssl-3-x64.dll     # Copied automatically (OpenSSL)
 ```
 
-* add some extra lines to point to the MinGW include folder where you extracted libusb-1.0, making it look like this
-    * take note of the "" around the folder names, these are needed when there are spaces in the folder name
-    * you'll need to find out the exact paths for your system
+### Visual Studio 2022 Build (build_vs2022)
 
+Uses MSVC compiler. Best performance, recommended for release builds.
+
+```cmd
+:: Use cmd.exe (not MSYS2 terminal) to avoid header conflicts
+
+git clone https://github.com/hydrasdr/hydrasdr_433.git
+cd hydrasdr_433
+cmake -B build_vs2022 -G "Visual Studio 17 2022" -A x64 ^
+    -DENABLE_OPENSSL=OFF ^
+    -DHYDRASDR_DIR=C:/hydrasdr-host
+cmake --build build_vs2022 --config Release
+
+:: Run tests
+build_vs2022\tests\Release\channelizer-bench.exe
+build_vs2022\external\hydrasdr-lfft\Release\lfft_test.exe
 ```
-/usr/include/libusb-1.0
-/usr/include
-/usr/local/include
-"C:/Program Files/mingw-w64/x86_64-8.1.0-posix-seh-rt_v6-rev0/mingw64/include"
-"C:/Program Files/mingw-w64/x86_64-8.1.0-posix-seh-rt_v6-rev0/mingw64/include/libusb-1.0"
+
+**Output:**
+```
+build_vs2022/src/Release/
+├── hydrasdr_433.exe
+├── hydrasdr.dll         # Copied automatically
+└── libusb-1.0.dll       # Copied automatically
 ```
 
-* open a MinGW terminal in the librtlsdr folder
-* generate makefiles for MinGW: `cmake -G "MinGW Makefiles" -B build`
-* build the librtlsdr library: `cmake --build build`
+### Build from MSYS2 Terminal (Alternative)
 
-#### rtl_433
+If using MSYS2 terminal for VS2022 builds, use explicit cmake path to avoid MinGW header conflicts:
 
-* clone the rtl_433 repository and cd into it
-* run `cmake -G "MinGW Makefiles" -B build` in the build directory
-* run cmake-gui (this is easiest)
-* set the source (the rtl_433 source code directory) and the build directory (one might create a build directory in the source directory)
-* click configure
-* select the grouped and advanced tickboxes
-* go into the librtlsdr config group
-* point the `LIBRTLSDR_INCLUDE_DIRS` to the include folder of the librtlsdr source
-* point the `LIBRTLSDR_LIBRARIES` to the `librtlsdr.dll.a` file in the <librtlsdr_source>/build/src folder
-    * that's the one you've built earlier
-* start a MinGW terminal and run `cmake --build build` to build
-    * when something in the tests folder doesn't build, you can disable it by commenting out `add_subdirectory(tests)` in the CMakeLists.txt file in the source folder of rtl_433
-* rtl_433.exe should be built now
-* you need to place it in the same folder as librtlsdr.dll and libusb-1.0.dll (you should have seen both of them by now)
-* good luck!
+```bash
+# Clear MinGW from PATH for VS2022
+export PATH="/d/msys64/usr/bin:$PATH"
 
-If your system is missing or you find these steps are outdated please PR an update or open an issue.
+/d/msys64/mingw64/bin/cmake -B build_vs2022 -G "Visual Studio 17 2022" -A x64 \
+    -DENABLE_OPENSSL=OFF \
+    -DHYDRASDR_DIR="C:/hydrasdr-host"
+
+/d/msys64/mingw64/bin/cmake --build build_vs2022 --config Release
+```
+
+## Linux / macOS
+
+```bash
+git clone https://github.com/hydrasdr/hydrasdr_433.git
+cd hydrasdr_433
+cmake -B build -GNinja -DHYDRASDR_DIR=/path/to/hydrasdr-host
+cmake --build build
+```
+
+## Build Options
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `HYDRASDR_DIR` | - | **Required.** Path to HydraSDR library source/build |
+| `ENABLE_RTLSDR` | OFF | Enable RTL-SDR support |
+| `ENABLE_SOAPYSDR` | OFF | Enable SoapySDR support |
+| `ENABLE_OPENSSL` | ON | Enable TLS support (MQTT, InfluxDB) |
+| `BUILD_TESTING` | ON | Build test suite |
+
+## Static Runtime Configuration
+
+Both MinGW64 and VS2022 builds use static C runtime by default:
+
+- **MinGW64**: Uses `-static-libgcc` to avoid libgcc DLL dependency
+- **VS2022**: Uses `MultiThreaded` runtime (`/MT`) instead of `MultiThreadedDLL` (`/MD`)
+
+This produces standalone executables that only require the HydraSDR-specific DLLs:
+- `libhydrasdr.dll` / `hydrasdr.dll` - HydraSDR library
+- `libusb-1.0.dll` - USB library for device access
+- OpenSSL DLLs (MinGW64 only, if TLS enabled)
+
+## Running Tests
+
+### MinGW64 (build_mingw64)
+
+```bash
+cd build_mingw64
+
+# Run all tests
+ctest
+
+# Run specific tests
+./external/hydrasdr-lfft/lfft_test      # FFT library tests (45 tests)
+./tests/channelizer-bench               # Channelizer tests (48 tests)
+./tests/resampler-test                  # Resampler tests
+```
+
+### Visual Studio 2022 (build_vs2022)
+
+```cmd
+cd build_vs2022
+
+:: Run all tests
+ctest -C Release
+
+:: Run specific tests
+external\hydrasdr-lfft\Release\lfft_test.exe
+tests\Release\channelizer-bench.exe
+tests\Release\resampler-test.exe
+```
+
+### Test Coverage
+
+* **lfft_test** (45 tests): FFT correctness for sizes 2-32
+  - DC input, impulse response, single tones
+  - Reference DFT comparison, roundtrip
+  - Parseval's theorem, linearity, time shift
+  - Real input symmetry
+  - Benchmarks: 150-286 MSps depending on compiler
+
+* **channelizer-bench** (48 tests): PFB channelizer
+  - Initialization, frequency mapping
+  - DC/channel routing, isolation
+  - Multi-tone separation, decimation
+  - Continuous processing, energy conservation
+  - Benchmarks: 12-37x real-time margin
+
+### Performance Comparison
+
+| Test | MinGW64 (GCC 15) | VS2022 (MSVC 19) |
+|------|------------------|------------------|
+| FFT N=8 | 174 MSps | 222 MSps |
+| FFT N=32 | 123 MSps | 150 MSps |
+| Channelizer 4-ch | 31x RT | 34x RT |
+| Channelizer 16-ch | 10x RT | 12x RT |
+
+## Platform-Specific Dependencies
+
+### Debian/Ubuntu
+
+```bash
+sudo apt-get install build-essential cmake ninja-build pkg-config \
+    libtool libusb-1.0-0-dev librtlsdr-dev rtl-sdr libssl-dev
+```
+
+### Fedora/RHEL
+
+```bash
+sudo dnf install cmake ninja-build gcc rtl-sdr-devel libusb1-devel openssl-devel
+```
+
+### macOS (Homebrew)
+
+```bash
+brew install cmake ninja rtl-sdr pkg-config openssl libusb
+```
+
+### Windows (MSYS2)
+
+```bash
+pacman -S mingw-w64-x86_64-toolchain mingw-w64-x86_64-cmake \
+    mingw-w64-x86_64-ninja mingw-w64-x86_64-openssl mingw-w64-x86_64-libusb
+```
+
+## Troubleshooting
+
+### HydraSDR Not Found
+
+Ensure `HYDRASDR_DIR` points to the hydrasdr-host directory containing:
+- `libhydrasdr/src/hydrasdr.h` (header)
+- `build_mingw64/libhydrasdr/src/libhydrasdr.dll.a` (MinGW)
+- `build_VS2022/libhydrasdr/src/Release/hydrasdr.lib` (VS2022)
+
+Example: `C:/hydrasdr-host`
+
+### VS2022 Build Links Against MinGW Library
+
+The FindHydraSDR module automatically selects the correct library based on compiler. If issues persist, clear CMakeCache.txt and reconfigure:
+
+```cmd
+del build_vs2022\CMakeCache.txt
+cmake -B build_vs2022 -G "Visual Studio 17 2022" -A x64 -DENABLE_OPENSSL=OFF ^
+    -DHYDRASDR_DIR=C:/hydrasdr-host
+```
+
+### Missing DLLs at Runtime
+
+Both MinGW64 and VS2022 builds copy DLLs automatically. If DLLs are missing, reconfigure with a clean CMakeCache.txt:
+
+```bash
+# MinGW64
+rm build_mingw64/CMakeCache.txt
+cmake -B build_mingw64 -G Ninja \
+    -DHYDRASDR_DIR="C:/hydrasdr-host"
+
+# VS2022
+del build_vs2022\CMakeCache.txt
+cmake -B build_vs2022 -G "Visual Studio 17 2022" -A x64 \
+    -DENABLE_OPENSSL=OFF \
+    -DHYDRASDR_DIR=C:/hydrasdr-host
+```
+
+### SoapySDR Version Mismatch
+
+If you experience trouble with SoapySDR, you may have mixed 0.7 and 0.8 headers/libs.
+Purge all SoapySDR packages and install only from packages (0.7) or source (0.8).
+
+## Contributing
+
+See [CONTRIBUTING.md](../CONTRIBUTING.md) for guidelines on submitting changes.

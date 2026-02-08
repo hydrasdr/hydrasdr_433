@@ -1,5 +1,5 @@
 /** @file
-    Generic RF data receiver and decoder for ISM band devices using RTL-SDR and SoapySDR.
+    Generic RF data receiver and decoder for ISM band devices for HydraSDR.
 
     Copyright (C) 2019 Christian W. Zuckschwerdt <zany@triq.net>
 

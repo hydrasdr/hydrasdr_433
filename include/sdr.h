@@ -1,7 +1,11 @@
 /** @file
-    SDR input from RTLSDR or SoapySDR.
+    SDR input for HydraSDR.
 
-    Copyright (C) 2018 Christian Zuckschwerdt
+    Based on rtl_433 by Christian Zuckschwerdt and contributors.
+    HydraSDR adaptation with native CF32 support.
+
+    Copyright (C) 2018 Christian Zuckschwerdt (original rtl_433)
+    Copyright (C) 2026 Benjamin Vernoux <bvernoux@hydrasdr.com>
 
     This program is free software; you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -28,14 +32,31 @@ typedef enum sdr_event_flags {
     SDR_EV_GAIN = 1 << 4,
 } sdr_event_flags_t;
 
+/** Sample format enumeration.
+    Describes the native IQ sample format from the SDR.
+*/
+typedef enum sdr_sample_format {
+    SDR_SAMPLE_CU8  = 0,  ///< Complex unsigned 8-bit (rtl_tcp)
+    SDR_SAMPLE_CS8  = 1,  ///< Complex signed 8-bit
+    SDR_SAMPLE_CS16 = 2,  ///< Complex signed 16-bit
+    SDR_SAMPLE_CF32 = 3,  ///< Complex float32 (HydraSDR native)
+} sdr_sample_format_t;
+
+/** Sample sizes in bytes (for one complex I/Q sample pair) */
+#define SDR_SAMPLE_SIZE_CU8   2   ///< CU8: 1 byte I + 1 byte Q
+#define SDR_SAMPLE_SIZE_CS8   2   ///< CS8: 1 byte I + 1 byte Q
+#define SDR_SAMPLE_SIZE_CS16  4   ///< CS16: 2 bytes I + 2 bytes Q
+#define SDR_SAMPLE_SIZE_CF32  8   ///< CF32: 4 bytes I + 4 bytes Q
+
 typedef struct sdr_event {
     sdr_event_flags_t ev;
     uint32_t sample_rate;
     int freq_correction;
     uint32_t center_frequency;
     char const *gain_str;
-    void *buf;
-    int len;
+    const void *buf;        ///< Sample buffer (format depends on sample_format, read-only)
+    int len;                ///< Buffer length in bytes
+    sdr_sample_format_t sample_format;  ///< Native sample format (CF32, CS16, CU8)
 } sdr_event_t;
 
 typedef void (*sdr_event_cb_t)(sdr_event_t *ev, void *ctx);
@@ -81,6 +102,13 @@ int sdr_get_sample_size(sdr_dev_t *dev);
 */
 int sdr_get_sample_signed(sdr_dev_t *dev);
 
+/** Get native sample format.
+
+    @param dev the device handle
+    @return Sample format (SDR_SAMPLE_CU8, SDR_SAMPLE_CS16, SDR_SAMPLE_CF32, ...)
+*/
+sdr_sample_format_t sdr_get_sample_format(sdr_dev_t *dev);
+
 /** Set device frequency, optionally report status.
 
     @param dev the device handle
@@ -117,7 +145,7 @@ int sdr_set_auto_gain(sdr_dev_t *dev, int verbose);
 /** Set tuner gain or gain elements, optionally report status.
 
     @param dev the device handle
-    @param gain_str in tenths of a dB for RTL-SDR, string of gain element pairs (example LNA=40,VGA=20,AMP=0), or string of overall gain, in dB
+    @param gain_str in dB, string of gain element pairs (example LNA=40,VGA=20,AMP=0), or string of overall gain, in dB
     @param verbose the verbosity level for reports to stderr
     @return 0 on success
 */
@@ -157,21 +185,27 @@ uint32_t sdr_get_sample_rate(sdr_dev_t *dev);
 */
 int sdr_apply_settings(sdr_dev_t *dev, char const *sdr_settings, int verbose);
 
-/** Activate stream (only needed for SoapySDR).
+/** Print the current gain state for all managed gain controls.
+
+    @param dev the device handle
+*/
+void sdr_show_gain_state(sdr_dev_t *dev);
+
+/** Activate stream.
 
     @param dev the device handle
     @return 0 on success
 */
 int sdr_activate(sdr_dev_t *dev);
 
-/** Deactivate stream (only needed for SoapySDR).
+/** Deactivate stream.
 
     @param dev the device handle
     @return 0 on success
 */
 int sdr_deactivate(sdr_dev_t *dev);
 
-/** Reset buffer (only needed for RTL-SDR), optionally report status.
+/** Reset buffer, optionally report status.
 
     @param dev the device handle
     @param verbose the verbosity level for reports to stderr
@@ -206,7 +240,7 @@ int sdr_start_sync(sdr_dev_t *dev, sdr_event_cb_t cb, void *ctx, uint32_t buf_nu
 int sdr_stop(sdr_dev_t *dev);
 int sdr_stop_sync(sdr_dev_t *dev);
 
-/** Redirect SoapySDR library logging.
+/** Redirect SDR library logging.
 */
 void sdr_redirect_logging(void);
 

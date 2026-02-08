@@ -1,5 +1,5 @@
 /** @file
-    rtl_433, turns your Realtek RTL2832 based DVB dongle into a 433.92MHz generic data receiver.
+    hydrasdr_433, generic RF data receiver and decoder for ISM band devices for HydraSDR.
 
     Copyright (C) 2012 by Benjamin Larsson <benjamin@southpole.se>
 
@@ -54,6 +54,7 @@
 #include "fatal.h"
 #include "write_sigrok.h"
 #include "mongoose.h"
+#include "channelizer.h"
 
 #ifdef _WIN32
 #include <io.h>
@@ -133,16 +134,16 @@ _Noreturn
 static void usage(int exit_code)
 {
     term_help_fprintf(exit_code ? stderr : stdout,
-            "Generic RF data receiver and decoder for ISM band devices using RTL-SDR and SoapySDR.\n"
+            "Generic RF data receiver and decoder for ISM band devices using HydraSDR.\n"
             "Full documentation is available at https://triq.org/\n"
             "\nUsage:\n"
 #ifdef _WIN32
-            "  A \"rtl_433.conf\" file is searched in the current dir, %%LocalAppData%%, %%ProgramData%%,\n"
-            "  e.g. \"C:\\Users\\username\\AppData\\Local\\rtl_433\\\", \"C:\\ProgramData\\rtl_433\\\",\n"
+            "  A \"hydrasdr_433.conf\" file is searched in the current dir, %%LocalAppData%%, %%ProgramData%%,\n"
+            "  e.g. \"C:\\Users\\username\\AppData\\Local\\hydrasdr_433\\\", \"C:\\ProgramData\\hydrasdr_433\\\",\n"
             "  then command line args will be parsed in order.\n"
 #else
-            "  A \"rtl_433.conf\" file is searched in \"./\", XDG_CONFIG_HOME e.g. \"$HOME/.config/rtl_433/\",\n"
-            "  SYSCONFDIR e.g. \"/usr/local/etc/rtl_433/\", then command line args will be parsed in order.\n"
+            "  A \"hydrasdr_433.conf\" file is searched in \"./\", XDG_CONFIG_HOME e.g. \"$HOME/.config/hydrasdr_433/\",\n"
+            "  SYSCONFDIR e.g. \"/usr/local/etc/hydrasdr_433/\", then command line args will be parsed in order.\n"
 #endif
             "\t\t= General options =\n"
             "  [-V] Output the version string and exit\n"
@@ -150,15 +151,23 @@ static void usage(int exit_code)
             "       -v : verbose notice, -vv : verbose info, -vvv : debug, -vvvv : trace.\n"
             "  [-c <path>] Read config options from a file\n"
             "\t\t= Tuner options =\n"
-            "  [-d <RTL-SDR USB device index> | :<RTL-SDR USB device serial> | <SoapySDR device query> | rtl_tcp | help]\n"
+            "  [-d <HydraSDR device index> | file | rtl_tcp | help]\n"
             "  [-g <gain> | help] (default: auto)\n"
-            "  [-t <settings>] apply a list of keyword=value settings to the SDR device\n"
-            "       e.g. for SoapySDR -t \"antenna=A,bandwidth=4.5M,rfnotch_ctrl=false\"\n"
-            "       for RTL-SDR use \"direct_samp[=1]\", \"offset_tune[=1]\", \"digital_agc[=1]\", \"biastee[=1]\"\n"
+            "  [-t <settings>] apply a list of keyword=value settings to HydraSDR\n"
+            "       e.g. -t \"sensitivity=12\" or -t \"linearity=15\" or -t \"biastee=1\"\n"
             "  [-f <frequency>] Receive frequency(s) (default: %d Hz)\n"
             "  [-H <seconds>] Hop interval for polling of multiple frequencies (default: %d seconds)\n"
-            "  [-p <ppm_error>] Correct rtl-sdr tuner frequency offset error (default: 0)\n"
+            "  [-p <ppm_error>] Correct tuner frequency offset error (default: 0)\n"
             "  [-s <sample rate>] Set sample rate (default: %d Hz)\n"
+            "  [-B <center>:<bandwidth>[:<channels>]] Wideband scanning mode (HydraSDR only)\n"
+            "       Scan a frequency band using polyphase channelizer.\n"
+            "       Use wideband when ISM band is wider than single-freq capture:\n"
+            "         433 MHz: band=1.74 MHz, single-freq=250k  -> WIDEBAND NEEDED\n"
+            "         868 MHz: band=600 kHz,  single-freq=1M    -> single-freq OK (-f 868.5M)\n"
+            "         915 MHz: band=26 MHz,   single-freq=1M    -> WIDEBAND NEEDED\n"
+            "       Examples:\n"
+            "         -B 433.92M:2M:8    Cover full EU 433 ISM (433.05-434.79 MHz)\n"
+            "         -B 915M:8M:16      Cover partial US 915 ISM (911-919 MHz)\n"
             "  [-D quit | restart | pause | manual] Input device run mode options (default: quit).\n"
             "\t\t= Demodulator options =\n"
             "  [-R <device> | help] Enable only the specified device decoding protocol (can be used multiple times)\n"
@@ -222,22 +231,13 @@ static void help_device_selection(void)
 {
     term_help_fprintf(stdout,
             "\t\t= Input device selection =\n"
-#ifdef RTLSDR
-            "\tRTL-SDR device driver is available.\n"
+#ifdef HYDRASDR
+            "\tHydraSDR device driver is available.\n"
 #else
-            "\tRTL-SDR device driver is not available.\n"
+            "\tHydraSDR device driver is not available.\n"
 #endif
-            "  [-d <RTL-SDR USB device index>] (default: 0)\n"
-            "  [-d :<RTL-SDR USB device serial (can be set with rtl_eeprom -s)>]\n"
-            "\tTo set gain for RTL-SDR use -g <gain> to set an overall gain in dB.\n"
-#ifdef SOAPYSDR
-            "\tSoapySDR device driver is available.\n"
-#else
-            "\tSoapySDR device driver is not available.\n"
-#endif
-            "  [-d \"\"] Open default SoapySDR device\n"
-            "  [-d driver=rtlsdr] Open e.g. specific SoapySDR device\n"
-            "\tTo set gain for SoapySDR use -g ELEM=val,ELEM=val,... e.g. -g LNA=20,TIA=8,PGA=2 (for LimeSDR).\n"
+            "  [-d <HydraSDR device index>] (default: 0)\n"
+            "  [-d :<HydraSDR device serial>]\n"
             "  [-d rtl_tcp[:[//]host[:port]] (default: localhost:1234)\n"
             "\tSpecify host/port to connect to with e.g. -d rtl_tcp:127.0.0.1:1234\n");
     exit(0);
@@ -248,10 +248,28 @@ static void help_gain(void)
 {
     term_help_fprintf(stdout,
             "\t\t= Gain option =\n"
-            "  [-g <gain>] (default: auto)\n"
-            "\tFor RTL-SDR: gain in dB (\"0\" is auto).\n"
-            "\tFor SoapySDR: gain in dB for automatic distribution (\"\" is auto), or string of gain elements.\n"
-            "\tE.g. \"LNA=20,TIA=8,PGA=2\" for LimeSDR.\n");
+            "  [-g <gain>] (default: auto/AGC)\n"
+            "\tFor HydraSDR: raw gain value (\"0\" or \"\" is auto/AGC).\n"
+            "\tSets the first available gain mode: linearity > sensitivity > VGA.\n"
+            "\tValue is clamped to the hardware range.\n"
+            "\n"
+            "\tFor fine-grained control use -t (device settings):\n"
+            "\t  Individual gain stages:\n"
+            "\t  -t lna=<value>         LNA (Low Noise Amplifier) gain\n"
+            "\t  -t mixer=<value>       Mixer gain\n"
+            "\t  -t vga=<value>         VGA (Variable Gain Amplifier) gain\n"
+            "\t  E.g. -t lna=9,vga=12,mixer=5\n"
+            "\n"
+            "\t  Composite gain profiles:\n"
+            "\t  -t sensitivity=<value> Maximize sensitivity (weak signals)\n"
+            "\t  -t linearity=<value>   Maximize linearity (strong signals, less distortion)\n"
+            "\t  E.g. -t sensitivity=15 or -t linearity=10\n"
+            "\n"
+            "\t  Decimation mode:\n"
+            "\t  -t hd                  High definition mode (10 MSPS IQ, default)\n"
+            "\t  -t hd=0               Low bandwidth mode\n"
+            "\n"
+            "\tValid ranges are hardware-specific; out-of-range values are clamped.\n");
     exit(0);
 }
 
@@ -294,7 +312,7 @@ static void help_output(void)
             "\tE.g. -F \"mqtt://localhost:1883,user=USERNAME,pass=PASSWORD,retain=0,devices=rtl_433[/id]\"\n"
             "\tFor TLS use e.g. -F \"mqtts://host,tls_cert=<path>,tls_key=<path>,tls_ca_cert=<path>\"\n"
             "\tWith MQTT each rtl_433 instance needs a distinct driver selection. The MQTT Client-ID is computed from the driver string.\n"
-            "\tIf you use multiple RTL-SDR, perhaps set a serial and select by that (helps not to get the wrong antenna).\n"
+            "\tIf you use multiple HydraSDR devices, perhaps set a serial and select by that (helps not to get the wrong antenna).\n"
             "  [-F influx[:[//]host[:port][/<path and options>]]\n"
             "\tSpecify InfluxDB 2.0 server with e.g. -F \"influx://localhost:9999/api/v2/write?org=<org>&bucket=<bucket>,token=<authtoken>\"\n"
             "\tSpecify InfluxDB 1.x server with e.g. -F \"influx://localhost:8086/write?db=<db>&p=<password>&u=<user>\"\n"
@@ -417,6 +435,511 @@ static void reset_sdr_callback(r_cfg_t *cfg)
     pulse_detect_reset(demod->pulse_detect);
 }
 
+/* Forward declaration for goto-based cleanup in init */
+static void free_wideband_channel_state(struct dm_state *demod);
+
+/**
+ * Initialize per-channel state for wideband processing.
+ * Each channel needs its own pulse detector, lowpass filter, FM demod state,
+ * and resampler to maintain continuity across SDR buffer frames.
+ *
+ * @param demod         Demodulator state
+ * @param num_channels  Number of channels
+ * @param channel_rate  Input sample rate per channel (from channelizer)
+ * @param target_rate   Target sample rate for decoders (e.g., 250000)
+ * @param max_samples   Maximum samples per channel per frame (for buffer sizing)
+ */
+static int init_wideband_channel_state(struct dm_state *demod, int num_channels,
+                                       uint32_t channel_rate, uint32_t target_rate,
+                                       size_t max_samples)
+{
+    if (demod->wideband_channels_allocated >= num_channels)
+        return 0;  /* Already allocated */
+
+    /* Set channel count early so free_wideband_channel_state can iterate
+     * correctly during partial-failure cleanup (all arrays are calloc'd). */
+    demod->wideband_channels_allocated = num_channels;
+
+    /* Allocate pulse detectors for each channel */
+    demod->wb_pulse_detect = calloc((size_t)num_channels, sizeof(pulse_detect_t *));
+    if (!demod->wb_pulse_detect)
+        goto fail;
+
+    for (int i = 0; i < num_channels; i++) {
+        demod->wb_pulse_detect[i] = pulse_detect_create();
+        if (!demod->wb_pulse_detect[i])
+            goto fail;
+        pulse_detect_set_levels(demod->wb_pulse_detect[i], demod->use_mag_est,
+                                demod->level_limit, demod->min_level,
+                                demod->min_snr, demod->detect_verbosity);
+    }
+
+    /* Allocate lowpass filter states for each channel */
+    demod->wb_lowpass_filter_state = calloc((size_t)num_channels, sizeof(filter_state_t));
+    if (!demod->wb_lowpass_filter_state)
+        goto fail;
+
+    /* Allocate FM demod states for each channel */
+    demod->wb_demod_FM_state = calloc((size_t)num_channels, sizeof(demodfm_state_t));
+    if (!demod->wb_demod_FM_state)
+        goto fail;
+
+    /* Allocate per-channel noise level tracking */
+    demod->wb_noise_level = calloc((size_t)num_channels, sizeof(float));
+    if (!demod->wb_noise_level)
+        goto fail;
+    demod->wb_min_level_auto = calloc((size_t)num_channels, sizeof(float));
+    if (!demod->wb_min_level_auto)
+        goto fail;
+
+    /* Allocate per-channel resamplers (channel_rate -> target_rate) */
+    demod->wb_resamplers = calloc((size_t)num_channels, sizeof(cf32_resampler_t));
+    if (!demod->wb_resamplers)
+        goto fail;
+
+    /* Initialize resamplers for each channel */
+    for (int i = 0; i < num_channels; i++) {
+        if (cf32_resampler_init(&demod->wb_resamplers[i], channel_rate, target_rate, max_samples) != 0)
+            goto fail;
+    }
+
+    /* Allocate per-channel pulse data structures */
+    demod->wb_pulse_data = calloc((size_t)num_channels, sizeof(pulse_data_t));
+    if (!demod->wb_pulse_data)
+        goto fail;
+    demod->wb_fsk_pulse_data = calloc((size_t)num_channels, sizeof(pulse_data_t));
+    if (!demod->wb_fsk_pulse_data)
+        goto fail;
+
+    /* Initialize per-channel pulse data */
+    for (int i = 0; i < num_channels; i++) {
+        pulse_data_clear(&demod->wb_pulse_data[i]);
+        pulse_data_clear(&demod->wb_fsk_pulse_data[i]);
+    }
+
+    demod->wb_target_rate = target_rate;
+
+    /* Compute per-channel scratch buffer size.
+     * Must hold the maximum resampled sample count for any channel. */
+    size_t wb_buf_len = max_samples + 1;
+    if (channel_rate != target_rate && demod->wb_resamplers) {
+        size_t resampler_max = demod->wb_resamplers[0].output_buf_size;
+        if (resampler_max > wb_buf_len)
+            wb_buf_len = resampler_max;
+    }
+
+    /* Allocate per-channel AM, FM, and temp scratch buffers.
+     * These isolate each channel from the shared demod->am_buf / demod->buf.fm,
+     * preventing data corruption if channels are processed concurrently. */
+    demod->wb_am_bufs = calloc((size_t)num_channels * wb_buf_len, sizeof(int16_t));
+    if (!demod->wb_am_bufs)
+        goto fail;
+    demod->wb_fm_bufs = calloc((size_t)num_channels * wb_buf_len, sizeof(int16_t));
+    if (!demod->wb_fm_bufs)
+        goto fail;
+    demod->wb_temp_bufs = calloc((size_t)num_channels * wb_buf_len, sizeof(uint16_t));
+    if (!demod->wb_temp_bufs)
+        goto fail;
+    demod->wb_buf_len = wb_buf_len;
+
+    /* Initialize per-channel levels from global defaults */
+    for (int i = 0; i < num_channels; i++) {
+        demod->wb_min_level_auto[i] = demod->min_level;
+        demod->wb_noise_level[i] = 0.0f;  /* Will be initialized on first frame */
+    }
+
+    return 0;
+
+fail:
+    /* Centralized cleanup - free_wideband_channel_state handles partial state
+     * safely because all arrays were calloc'd (NULL/zero entries are skipped). */
+    free_wideband_channel_state(demod);
+    return -1;
+}
+
+/**
+ * Process wideband samples through PFB channelizer.
+ *
+ * Splits wideband input into narrowband channels, processes each through
+ * the existing AM/FM demod and pulse detection pipeline.
+ *
+ * Each channel maintains its own pulse detector, lowpass filter, and FM demod
+ * state to preserve continuity across SDR buffer frames.
+ */
+static void process_wideband_channels(r_cfg_t *cfg, struct dm_state *demod,
+                                      float *iq_buf, int n_samples)
+{
+    channelizer_t *ch = cfg->channelizer;
+    float *channel_out[WIDEBAND_MAX_CHANNELS];
+    int out_samples;
+    char time_str[LOCAL_TIME_BUFLEN];
+
+    if (!ch) {
+        print_log(LOG_ERROR, "Wideband", "Channelizer structure not allocated");
+        cfg->wideband_mode = 0;
+        return;
+    }
+    if (!ch->initialized) {
+        /* Channelizer not ready, initialize it now with actual sample rate */
+        if (channelizer_init(ch, cfg->wideband_channels,
+                             cfg->wideband_center, cfg->wideband_bandwidth,
+                             cfg->samp_rate, (size_t)n_samples) != 0) {
+            print_log(LOG_ERROR, "Wideband", "Failed to initialize channelizer");
+            cfg->wideband_mode = 0;  /* Disable wideband mode on failure */
+            return;
+        }
+        float half_usable = ch->channel_spacing * CHANNELIZER_CUTOFF_RATIO / 2.0f;
+        print_logf(LOG_NOTICE, "Wideband", "Channelizer: %d channels, spacing %.1f kHz, usable BW +/-%.1f kHz each",
+                   ch->num_channels, ch->channel_spacing / 1000.0f, half_usable / 1000.0f);
+
+        /* Show channel frequency map with band coverage */
+        for (int c = 0; c < ch->num_channels; c++) {
+            float freq = channelizer_get_channel_freq(ch, c);
+            float lo = (freq - half_usable) / 1e6f;
+            float hi = (freq + half_usable) / 1e6f;
+            const char *note = "";
+            if (c == 0) note = " (DC)";
+            else if (c == ch->num_channels / 2) note = " (Nyquist)";
+            print_logf(LOG_NOTICE, "Wideband", "  Ch%d: %.3f MHz  [%.3f - %.3f]%s",
+                       c, freq / 1e6f, lo, hi, note);
+        }
+
+        /* Use channelizer output rate directly as decoder rate.
+         *
+         * The PFB channelizer already provides anti-aliasing (80 dB stopband).
+         * Resampling to a different rate is unnecessary and harmful: the
+         * polyphase resampler's short filter (8 taps/branch, Blackman window)
+         * attenuates signals near the channel edge by 5+ dB, killing signals
+         * that the PFB passes cleanly.
+         *
+         * Decoders work in microseconds (not sample counts), so any reasonable
+         * channel rate (156k-625k) works correctly.
+         */
+        uint32_t target_rate = ch->channel_rate;
+        size_t max_chan_samples = (size_t)n_samples / (size_t)ch->num_channels + 1;
+        if (init_wideband_channel_state(demod, ch->num_channels, ch->channel_rate,
+                                        target_rate, max_chan_samples) != 0) {
+            print_log(LOG_ERROR, "Wideband", "Failed to allocate per-channel state");
+            cfg->wideband_mode = 0;
+            return;
+        }
+        print_logf(LOG_NOTICE, "Wideband", "Per-channel decoder rate: %u Hz (no resampling)",
+                   target_rate);
+    }
+
+    /* Run the channelizer: split wideband input into narrowband channels */
+    if (channelizer_process(ch, iq_buf, n_samples, channel_out, &out_samples) != 0) {
+        print_log(LOG_WARNING, "Wideband", "Channelizer processing failed");
+        return;
+    }
+
+    /* Safety check: ensure out_samples doesn't exceed buffer limits */
+    if (out_samples > MAXIMAL_BUF_LENGTH) {
+        print_logf(LOG_ERROR, "Wideband", "Output samples %d exceeds buffer size %d",
+                   out_samples, MAXIMAL_BUF_LENGTH);
+        return;
+    }
+
+    /*
+     * Sample offset for pulse detection needs to be scaled to channel rate.
+     * input_pos is in wideband samples, but pulse_detect works at channel rate.
+     */
+    uint64_t channel_sample_offset = cfg->input_pos / (uint64_t)ch->num_channels;
+
+    /* Safety check: ensure channel state is allocated */
+    if (ch->num_channels > demod->wideband_channels_allocated) {
+        print_logf(LOG_ERROR, "Wideband", "Channel count mismatch: %d > %d allocated",
+                   ch->num_channels, demod->wideband_channels_allocated);
+        return;
+    }
+
+    /* Process each channel through the existing demodulation pipeline */
+    for (int chan = 0; chan < ch->num_channels; chan++) {
+        float *chan_iq = channel_out[chan];
+        float chan_freq = channelizer_get_channel_freq(ch, chan);
+        int resampled_samples = out_samples;
+        uint32_t effective_rate = ch->channel_rate;
+
+        /* Defensive check: ensure channelizer output is valid */
+        if (!chan_iq) {
+            print_logf(LOG_ERROR, "Wideband", "Ch%d: NULL channel output from channelizer", chan);
+            continue;
+        }
+
+        /* Resample channel to target rate (e.g., 312.5k -> 250k) */
+        if (demod->wb_resamplers && demod->wb_resamplers[chan].initialized) {
+            cf32_resampler_t *resampler = &demod->wb_resamplers[chan];
+            float *resampled_output = NULL;
+            int max_output = (int)resampler->output_buf_size;
+            resampled_samples = cf32_resampler_process(resampler, chan_iq, out_samples,
+                                                        &resampled_output, max_output);
+            if (resampled_samples > 0 && resampled_output) {
+                chan_iq = resampled_output;
+                effective_rate = demod->wb_target_rate;
+            } else {
+                print_logf(LOG_WARNING, "Wideband", "Ch%d: Resampler returned %d samples",
+                           chan, resampled_samples);
+                continue;  /* Skip channel if resampling failed */
+            }
+        }
+
+        /* Bounds check: ensure sample count is valid for buffers */
+        if (resampled_samples <= 0) {
+            continue;
+        }
+        if ((size_t)resampled_samples > demod->wb_buf_len) {
+            print_logf(LOG_ERROR, "Wideband", "Ch%d: resampled_samples %d exceeds per-channel buffer %zu",
+                       chan, resampled_samples, demod->wb_buf_len);
+            continue;
+        }
+
+        /* Per-channel scratch buffers (isolated from shared demod buffers) */
+        uint16_t *chan_temp = demod->wb_temp_bufs + (size_t)chan * demod->wb_buf_len;
+        int16_t *chan_am = demod->wb_am_bufs + (size_t)chan * demod->wb_buf_len;
+        int16_t *chan_fm = demod->wb_fm_bufs + (size_t)chan * demod->wb_buf_len;
+
+        /* AM demodulation (magnitude estimation for CF32 data) */
+        float avg_db = magnitude_est_cf32(chan_iq, chan_temp, resampled_samples);
+
+        /* Per-channel noise level tracking (like single-freq mode) */
+        /* Defensive check: ensure per-channel state arrays are valid */
+        if (!demod->wb_noise_level || !demod->wb_min_level_auto || !demod->wb_pulse_detect) {
+            print_logf(LOG_ERROR, "Wideband", "Ch%d: per-channel state not initialized", chan);
+            continue;
+        }
+        if (!demod->wb_pulse_detect[chan]) {
+            print_logf(LOG_ERROR, "Wideband", "Ch%d: pulse detector not initialized", chan);
+            continue;
+        }
+        float *chan_noise = &demod->wb_noise_level[chan];
+        float *chan_min_level = &demod->wb_min_level_auto[chan];
+        pulse_detect_t *chan_pulse_detect = demod->wb_pulse_detect[chan];
+
+        /* Initialize noise level on first frame */
+        if (*chan_min_level == 0.0f) {
+            *chan_min_level = demod->min_level;
+        }
+        if (*chan_noise == 0.0f) {
+            *chan_noise = *chan_min_level - 3.0f;
+        }
+
+        /* Noise estimation and squelch using per-channel noise level */
+        int noise_only = avg_db < *chan_noise + 3.0f;
+        int process_frame = demod->squelch_offset <= 0 || !noise_only ||
+                            demod->analyze_pulses || demod->dumper.len || demod->samp_grab;
+
+        /* Update per-channel noise level with exponential moving average */
+        if (noise_only) {
+            *chan_noise = (*chan_noise * 7.0f + avg_db) / 8.0f;  /* Fast fall */
+            /* Auto-adjust min level if noise drops significantly */
+            if (demod->auto_level > 0 && *chan_noise < demod->min_level - 3.0f
+                    && fabsf(*chan_min_level - *chan_noise - 3.0f) > 1.0f) {
+                *chan_min_level = *chan_noise + 3.0f;
+                pulse_detect_set_levels(chan_pulse_detect, demod->use_mag_est,
+                        demod->level_limit, *chan_min_level, demod->min_snr, demod->detect_verbosity);
+                if (cfg->verbosity >= LOG_DEBUG) {
+                    print_logf(LOG_DEBUG, "Wideband", "Ch%d [%.3f MHz] auto level: noise=%.1f dB, min=%.1f dB",
+                            chan, chan_freq / 1e6f, *chan_noise, *chan_min_level);
+                }
+            }
+        } else {
+            *chan_noise = (*chan_noise * 31.0f + avg_db) / 32.0f;  /* Slow rise */
+        }
+
+        if (!process_frame)
+            continue;
+
+        /* Use per-channel state for wideband processing */
+        /* Defensive check: ensure lowpass/FM state arrays exist */
+        if (!demod->wb_lowpass_filter_state || !demod->wb_demod_FM_state) {
+            print_logf(LOG_ERROR, "Wideband", "Ch%d: filter state arrays not initialized", chan);
+            continue;
+        }
+        filter_state_t *chan_lowpass = &demod->wb_lowpass_filter_state[chan];
+        demodfm_state_t *chan_fm_state = &demod->wb_demod_FM_state[chan];
+
+        /* Low-pass filter the AM signal (per-channel buffers) */
+        baseband_low_pass_filter(chan_lowpass, chan_temp,
+                                 chan_am, resampled_samples);
+
+        /* Select FSK pulse detect mode - force new mode for >800MHz */
+        unsigned fpdm = cfg->fsk_pulse_detect_mode;
+        if (fpdm == FSK_PULSE_DETECT_AUTO) {
+            if (chan_freq > FSK_PULSE_DETECTOR_LIMIT)
+                fpdm = FSK_PULSE_DETECT_NEW;
+            else
+                fpdm = FSK_PULSE_DETECT_OLD;
+        }
+
+        /* FM demodulation - always run for wideband to provide valid fm_data
+         * for pulse_detect_package (used for carrier frequency estimation even in OOK mode) */
+        {
+            float low_pass = demod->low_pass != 0.0f ? demod->low_pass : (fpdm ? 0.2f : 0.1f);
+            baseband_demod_FM_cf32(chan_fm_state, chan_iq, chan_fm,
+                                   resampled_samples, effective_rate, low_pass);
+        }
+
+        /* Per-channel pulse data - critical for multi-channel isolation */
+        if (!demod->wb_pulse_data || !demod->wb_fsk_pulse_data) {
+            print_logf(LOG_ERROR, "Wideband", "Ch%d: per-channel pulse data not initialized", chan);
+            continue;
+        }
+        pulse_data_t *chan_pulse = &demod->wb_pulse_data[chan];
+        pulse_data_t *chan_fsk_pulse = &demod->wb_fsk_pulse_data[chan];
+
+        /* Pulse detection and decoding using per-channel state */
+        int package_type = PULSE_DATA_OOK;
+        while (package_type && process_frame) {
+            int p_events = 0;
+            package_type = pulse_detect_package(chan_pulse_detect, chan_am,
+                                                chan_fm, resampled_samples, effective_rate,
+                                                channel_sample_offset, chan_pulse,
+                                                chan_fsk_pulse, fpdm);
+
+            if (package_type) {
+                if (!demod->frame_start_ago)
+                    demod->frame_start_ago = chan_pulse->start_ago;
+                demod->frame_end_ago = chan_pulse->end_ago;
+            }
+
+            if (package_type == PULSE_DATA_OOK) {
+                calc_rssi_snr(cfg, chan_pulse);
+                /* Recompute frequencies using channel rate (not wideband rate)
+                 * and channel center (not wideband center). */
+                chan_pulse->freq1_hz = (float)chan_pulse->fsk_f1_est / INT16_MAX * effective_rate / 2.0f + chan_freq;
+                chan_pulse->freq2_hz = (float)chan_pulse->fsk_f2_est / INT16_MAX * effective_rate / 2.0f + chan_freq;
+                chan_pulse->centerfreq_hz = chan_freq;
+                chan_pulse->sample_rate = effective_rate;
+                if (demod->analyze_pulses)
+                    fprintf(stderr, "Ch%d [%.3f MHz] Detected OOK package\t%s\n",
+                            chan, chan_freq / 1e6f,
+                            time_pos_str(cfg, chan_pulse->start_ago, time_str));
+
+                if (cfg->verbosity >= LOG_DEBUG)
+                    fprintf(stderr, "[Wideband] Ch%d OOK: %u pulses, freq=%.3f MHz\n",
+                            chan, chan_pulse->num_pulses, chan_freq / 1e6f);
+
+                p_events += run_ook_demods(&demod->r_devs, chan_pulse);
+                cfg->total_frames_ook += 1;
+                cfg->total_frames_events += p_events > 0;
+                cfg->frames_ook += 1;
+                cfg->frames_events += p_events > 0;
+
+                if (cfg->verbosity >= LOG_TRACE) pulse_data_print(chan_pulse);
+                if (cfg->raw_mode == 1 || (cfg->raw_mode == 2 && p_events == 0) ||
+                    (cfg->raw_mode == 3 && p_events > 0)) {
+                    data_t *data = pulse_data_print_data(chan_pulse);
+                    event_occurred_handler(cfg, data);
+                }
+                if (demod->analyze_pulses &&
+                    (cfg->grab_mode <= 1 || (cfg->grab_mode == 2 && p_events == 0) ||
+                     (cfg->grab_mode == 3 && p_events > 0))) {
+                    r_device device = {.log_fn = log_device_handler, .output_ctx = cfg};
+                    pulse_analyzer(chan_pulse, package_type, &device);
+                }
+
+            } else if (package_type == PULSE_DATA_FSK) {
+                calc_rssi_snr(cfg, chan_fsk_pulse);
+                /* Recompute frequencies using channel rate (not wideband rate)
+                 * and channel center (not wideband center). */
+                chan_fsk_pulse->freq1_hz = (float)chan_fsk_pulse->fsk_f1_est / INT16_MAX * effective_rate / 2.0f + chan_freq;
+                chan_fsk_pulse->freq2_hz = (float)chan_fsk_pulse->fsk_f2_est / INT16_MAX * effective_rate / 2.0f + chan_freq;
+                chan_fsk_pulse->centerfreq_hz = chan_freq;
+                chan_fsk_pulse->sample_rate = effective_rate;
+                if (demod->analyze_pulses)
+                    fprintf(stderr, "Ch%d [%.3f MHz] Detected FSK package\t%s\n",
+                            chan, chan_freq / 1e6f,
+                            time_pos_str(cfg, chan_fsk_pulse->start_ago, time_str));
+
+                if (cfg->verbosity >= LOG_DEBUG)
+                    fprintf(stderr, "[Wideband] Ch%d FSK: %u pulses, freq=%.3f MHz\n",
+                            chan, chan_fsk_pulse->num_pulses, chan_freq / 1e6f);
+
+                p_events += run_fsk_demods(&demod->r_devs, chan_fsk_pulse);
+                cfg->total_frames_fsk += 1;
+                cfg->total_frames_events += p_events > 0;
+                cfg->frames_fsk += 1;
+                cfg->frames_events += p_events > 0;
+
+                if (cfg->verbosity >= LOG_TRACE) pulse_data_print(chan_fsk_pulse);
+                if (cfg->raw_mode == 1 || (cfg->raw_mode == 2 && p_events == 0) ||
+                    (cfg->raw_mode == 3 && p_events > 0)) {
+                    data_t *data = pulse_data_print_data(chan_fsk_pulse);
+                    event_occurred_handler(cfg, data);
+                }
+                if (demod->analyze_pulses &&
+                    (cfg->grab_mode <= 1 || (cfg->grab_mode == 2 && p_events == 0) ||
+                     (cfg->grab_mode == 3 && p_events > 0))) {
+                    r_device device = {.log_fn = log_device_handler, .output_ctx = cfg};
+                    pulse_analyzer(chan_fsk_pulse, package_type, &device);
+                }
+            }
+
+            /* Handle successful events */
+            if (p_events > 0) {
+                demod->frame_event_count += p_events;
+                if (cfg->after_successful_events_flag) {
+                    if (cfg->after_successful_events_flag >= 2)
+                        cfg->hop_now = 1;  /* Not relevant for wideband, but keep for compat */
+                    if (cfg->after_successful_events_flag == 1)
+                        cfg->exit_async = 1;
+                }
+            }
+        }
+        /* No reset needed - each channel has its own persistent state */
+    }
+}
+
+/**
+ * Free per-channel wideband state.
+ */
+static void free_wideband_channel_state(struct dm_state *demod)
+{
+    if (demod->wb_pulse_detect) {
+        for (int i = 0; i < demod->wideband_channels_allocated; i++) {
+            if (demod->wb_pulse_detect[i])
+                pulse_detect_free(demod->wb_pulse_detect[i]);
+        }
+        free(demod->wb_pulse_detect);
+        demod->wb_pulse_detect = NULL;
+    }
+    if (demod->wb_lowpass_filter_state) {
+        free(demod->wb_lowpass_filter_state);
+        demod->wb_lowpass_filter_state = NULL;
+    }
+    if (demod->wb_demod_FM_state) {
+        free(demod->wb_demod_FM_state);
+        demod->wb_demod_FM_state = NULL;
+    }
+    if (demod->wb_noise_level) {
+        free(demod->wb_noise_level);
+        demod->wb_noise_level = NULL;
+    }
+    if (demod->wb_min_level_auto) {
+        free(demod->wb_min_level_auto);
+        demod->wb_min_level_auto = NULL;
+    }
+    if (demod->wb_resamplers) {
+        for (int i = 0; i < demod->wideband_channels_allocated; i++) {
+            cf32_resampler_free(&demod->wb_resamplers[i]);
+        }
+        free(demod->wb_resamplers);
+        demod->wb_resamplers = NULL;
+    }
+    free(demod->wb_pulse_data);
+    demod->wb_pulse_data = NULL;
+    free(demod->wb_fsk_pulse_data);
+    demod->wb_fsk_pulse_data = NULL;
+    free(demod->wb_am_bufs);
+    demod->wb_am_bufs = NULL;
+    free(demod->wb_fm_bufs);
+    demod->wb_fm_bufs = NULL;
+    free(demod->wb_temp_bufs);
+    demod->wb_temp_bufs = NULL;
+    demod->wb_buf_len = 0;
+    demod->wideband_channels_allocated = 0;
+}
+
 static void sdr_callback(unsigned char *iq_buf, uint32_t len, void *ctx)
 {
     //fprintf(stderr, "sdr_callback... %u\n", len);
@@ -466,9 +989,27 @@ static void sdr_callback(unsigned char *iq_buf, uint32_t len, void *ctx)
         samp_grab_push(demod->samp_grab, iq_buf, len);
     }
 
+    /* Wideband mode: route samples through PFB channelizer */
+    if (cfg->wideband_mode && cfg->channelizer) {
+        if (demod->sample_size == SDR_SAMPLE_SIZE_CF32) {
+            /* Verify float alignment (CF32 buffers from SDR must be 4-byte aligned) */
+            if ((uintptr_t)iq_buf % sizeof(float) != 0) {
+                print_log(LOG_ERROR, "Wideband", "CF32 buffer not aligned to float boundary");
+                return;
+            }
+            process_wideband_channels(cfg, demod, (float *)iq_buf, (int)n_samples);
+        } else {
+            print_log(LOG_ERROR, "Wideband", "Wideband mode requires CF32 samples (HydraSDR)");
+            cfg->wideband_mode = 0;
+        }
+        return;  /* Wideband processing handles everything, skip normal path */
+    }
+
     // AM demodulation
     float avg_db;
-    if (demod->sample_size == 2) { // CU8
+    if (demod->sample_size == SDR_SAMPLE_SIZE_CF32) { // CF32 (native HydraSDR format)
+        avg_db = magnitude_est_cf32((float const *)iq_buf, demod->buf.temp, n_samples);
+    } else if (demod->sample_size == SDR_SAMPLE_SIZE_CU8) { // CU8
         if (demod->use_mag_est) {
             //magnitude_true_cu8(iq_buf, demod->buf.temp, n_samples);
             avg_db = magnitude_est_cu8(iq_buf, demod->buf.temp, n_samples);
@@ -481,7 +1022,6 @@ static void sdr_callback(unsigned char *iq_buf, uint32_t len, void *ctx)
         avg_db = magnitude_est_cs16((int16_t *)iq_buf, demod->buf.temp, n_samples);
     }
 
-    //fprintf(stderr, "noise level: %.1f dB current: %.1f dB min level: %.1f dB\n", demod->noise_level, avg_db, demod->min_level_auto);
     if (demod->min_level_auto == 0.0f) {
         demod->min_level_auto = demod->min_level;
     }
@@ -528,7 +1068,9 @@ static void sdr_callback(unsigned char *iq_buf, uint32_t len, void *ctx)
 
     if (demod->enable_FM_demod && process_frame) {
         float low_pass = demod->low_pass != 0.0f ? demod->low_pass : fpdm ? 0.2f : 0.1f;
-        if (demod->sample_size == 2) { // CU8
+        if (demod->sample_size == SDR_SAMPLE_SIZE_CF32) { // CF32 (native HydraSDR format)
+            baseband_demod_FM_cf32(&demod->demod_FM_state, (float const *)iq_buf, demod->buf.fm, n_samples, cfg->samp_rate, low_pass);
+        } else if (demod->sample_size == SDR_SAMPLE_SIZE_CU8) { // CU8
             baseband_demod_FM(&demod->demod_FM_state, iq_buf, demod->buf.fm, n_samples, cfg->samp_rate, low_pass);
         } else { // CS16
             baseband_demod_FM_cs16(&demod->demod_FM_state, (int16_t *)iq_buf, demod->buf.fm, n_samples, cfg->samp_rate, low_pass);
@@ -670,43 +1212,63 @@ static void sdr_callback(unsigned char *iq_buf, uint32_t len, void *ctx)
         unsigned long out_len = n_samples * demod->sample_size;
 
         if (dumper->format == CU8_IQ) {
-            if (demod->sample_size == 4) {
+            if (demod->sample_size == SDR_SAMPLE_SIZE_CS16) {
                 for (unsigned long n = 0; n < n_samples * 2; ++n)
                     ((uint8_t *)demod->buf.temp)[n] = (((int16_t *)iq_buf)[n] / 256) + 128; // scale Q0.15 to Q0.7
                 out_buf = (uint8_t *)demod->buf.temp;
                 out_len = n_samples * 2 * sizeof(uint8_t);
             }
+            else if (demod->sample_size == SDR_SAMPLE_SIZE_CF32) {
+                for (unsigned long n = 0; n < n_samples * 2; ++n)
+                    ((uint8_t *)demod->buf.temp)[n] = (uint8_t)(((float *)iq_buf)[n] * 127.5f + 127.5f);
+                out_buf = (uint8_t *)demod->buf.temp;
+                out_len = n_samples * 2 * sizeof(uint8_t);
+            }
         }
         else if (dumper->format == CS16_IQ) {
-            if (demod->sample_size == 2) {
+            if (demod->sample_size == SDR_SAMPLE_SIZE_CU8) {
                 for (unsigned long n = 0; n < n_samples * 2; ++n)
                     ((int16_t *)demod->buf.temp)[n] = (iq_buf[n] * 256) - 32768; // scale Q0.7 to Q0.15
                 out_buf = (uint8_t *)demod->buf.temp; // this buffer is too small if out_block_size is large
                 out_len = n_samples * 2 * sizeof(int16_t);
             }
+            else if (demod->sample_size == SDR_SAMPLE_SIZE_CF32) {
+                for (unsigned long n = 0; n < n_samples * 2; ++n)
+                    ((int16_t *)demod->buf.temp)[n] = (int16_t)(((float *)iq_buf)[n] * 32767.0f);
+                out_buf = (uint8_t *)demod->buf.temp;
+                out_len = n_samples * 2 * sizeof(int16_t);
+            }
         }
         else if (dumper->format == CS8_IQ) {
-            if (demod->sample_size == 2) {
+            if (demod->sample_size == SDR_SAMPLE_SIZE_CU8) {
                 for (unsigned long n = 0; n < n_samples * 2; ++n)
                     ((int8_t *)demod->buf.temp)[n] = (iq_buf[n] - 128);
             }
-            else if (demod->sample_size == 4) {
+            else if (demod->sample_size == SDR_SAMPLE_SIZE_CS16) {
                 for (unsigned long n = 0; n < n_samples * 2; ++n)
                     ((int8_t *)demod->buf.temp)[n] = ((int16_t *)iq_buf)[n] >> 8;
+            }
+            else if (demod->sample_size == SDR_SAMPLE_SIZE_CF32) {
+                for (unsigned long n = 0; n < n_samples * 2; ++n)
+                    ((int8_t *)demod->buf.temp)[n] = (int8_t)(((float *)iq_buf)[n] * 127.0f);
             }
             out_buf = (uint8_t *)demod->buf.temp;
             out_len = n_samples * 2 * sizeof(int8_t);
         }
         else if (dumper->format == CF32_IQ) {
-            if (demod->sample_size == 2) {
+            if (demod->sample_size == SDR_SAMPLE_SIZE_CU8) {
                 for (unsigned long n = 0; n < n_samples * 2; ++n)
                     ((float *)demod->buf.temp)[n] = (iq_buf[n] - 128) / 128.0f;
             }
-            else if (demod->sample_size == 4) {
+            else if (demod->sample_size == SDR_SAMPLE_SIZE_CS16) {
                 for (unsigned long n = 0; n < n_samples * 2; ++n)
                     ((float *)demod->buf.temp)[n] = ((int16_t *)iq_buf)[n] / 32768.0f;
             }
-            out_buf = (uint8_t *)demod->buf.temp; // this buffer is too small if out_block_size is large
+            // CF32 input -> CF32 output: no conversion needed
+            if (demod->sample_size == SDR_SAMPLE_SIZE_CF32)
+                out_buf = (uint8_t *)iq_buf;
+            else
+                out_buf = (uint8_t *)demod->buf.temp;
             out_len = n_samples * 2 * sizeof(float);
         }
         else if (dumper->format == S16_AM) {
@@ -730,22 +1292,28 @@ static void sdr_callback(unsigned char *iq_buf, uint32_t len, void *ctx)
             out_len = n_samples * sizeof(float);
         }
         else if (dumper->format == F32_I) {
-            if (demod->sample_size == 2)
+            if (demod->sample_size == SDR_SAMPLE_SIZE_CU8)
                 for (unsigned long n = 0; n < n_samples; ++n)
                     demod->f32_buf[n] = (iq_buf[n * 2] - 128) * (1.0f / 0x80); // scale from Q0.7
-            else
+            else if (demod->sample_size == SDR_SAMPLE_SIZE_CS16)
                 for (unsigned long n = 0; n < n_samples; ++n)
                     demod->f32_buf[n] = ((int16_t *)iq_buf)[n * 2] * (1.0f / 0x8000); // scale from Q0.15
+            else // CF32
+                for (unsigned long n = 0; n < n_samples; ++n)
+                    demod->f32_buf[n] = ((float *)iq_buf)[n * 2]; // already float
             out_buf = (uint8_t *)demod->f32_buf;
             out_len = n_samples * sizeof(float);
         }
         else if (dumper->format == F32_Q) {
-            if (demod->sample_size == 2)
+            if (demod->sample_size == SDR_SAMPLE_SIZE_CU8)
                 for (unsigned long n = 0; n < n_samples; ++n)
                     demod->f32_buf[n] = (iq_buf[n * 2 + 1] - 128) * (1.0f / 0x80); // scale from Q0.7
-            else
+            else if (demod->sample_size == SDR_SAMPLE_SIZE_CS16)
                 for (unsigned long n = 0; n < n_samples; ++n)
                     demod->f32_buf[n] = ((int16_t *)iq_buf)[n * 2 + 1] * (1.0f / 0x8000); // scale from Q0.15
+            else // CF32
+                for (unsigned long n = 0; n < n_samples; ++n)
+                    demod->f32_buf[n] = ((float *)iq_buf)[n * 2 + 1]; // already float
             out_buf = (uint8_t *)demod->f32_buf;
             out_len = n_samples * sizeof(float);
         }
@@ -816,7 +1384,7 @@ static int hasopt(int test, int argc, char *argv[], char const *optstring)
 
 static void parse_conf_option(r_cfg_t *cfg, int opt, char *arg);
 
-#define OPTSTRING "hVvqD:c:x:z:p:a:AI:S:m:M:r:w:W:l:d:t:f:H:g:s:b:n:R:X:F:K:C:T:UGy:E:Y:"
+#define OPTSTRING "hVvqD:c:x:z:p:a:AI:S:m:M:r:w:W:l:d:t:f:H:g:s:b:n:R:X:F:K:C:T:UGy:E:Y:B:"
 
 // these should match the short options exactly
 static struct conf_keywords const conf_keywords[] = {
@@ -855,6 +1423,7 @@ static struct conf_keywords const conf_keywords[] = {
         {"duration", 'T'},
         {"test_data", 'y'},
         {"stop_after_successful_events", 'E'},
+        {"wideband", 'B'},
         {NULL, 0}};
 
 static void parse_conf_text(r_cfg_t *cfg, char *conf)
@@ -904,6 +1473,69 @@ static void parse_conf_args(r_cfg_t *cfg, int argc, char *argv[])
             opt = optopt; // allow missing arguments
         parse_conf_option(cfg, opt, optarg);
     }
+}
+
+/**
+ * Parse wideband scanning spec: <center>:<bandwidth>[:<channels>]
+ * E.g. "868.5M:2M" or "868.5M:2M:8"
+ *
+ * Returns 0 on success, -1 on error.
+ */
+static int parse_wideband_spec(char const *arg, float *center, float *bandwidth, int *channels)
+{
+    char *end;
+    char buf[64];
+    size_t len;
+
+    if (!arg || !*arg)
+        return -1;
+
+    /* Parse center frequency */
+    end = strchr(arg, ':');
+    if (!end)
+        return -1;
+    len = (size_t)(end - arg);
+    if (len >= sizeof(buf))
+        return -1;
+    memcpy(buf, arg, len);
+    buf[len] = '\0';
+    *center = (float)atouint32_metric(buf, "-B center: ");
+    if (*center <= 0)
+        return -1;
+
+    /* Parse bandwidth */
+    arg = end + 1;
+    end = strchr(arg, ':');
+    if (end) {
+        len = (size_t)(end - arg);
+        if (len >= sizeof(buf))
+            return -1;
+        memcpy(buf, arg, len);
+        buf[len] = '\0';
+    } else {
+        snprintf(buf, sizeof(buf), "%s", arg);
+    }
+    *bandwidth = (float)atouint32_metric(buf, "-B bandwidth: ");
+    if (*bandwidth <= 0)
+        return -1;
+
+    /* Parse optional channel count (default: 4) */
+    if (end) {
+        *channels = atoi(end + 1);
+        if (*channels < 2 || *channels > 16) {
+            fprintf(stderr, "Wideband channels must be 2-16 (got %d)\n", *channels);
+            return -1;
+        }
+        /* Must be power of 2 */
+        if (*channels & (*channels - 1)) {
+            fprintf(stderr, "Wideband channels must be power of 2 (got %d)\n", *channels);
+            return -1;
+        }
+    } else {
+        *channels = 4;  /* Default: 4 channels */
+    }
+
+    return 0;
 }
 
 static void parse_conf_option(r_cfg_t *cfg, int opt, char *arg)
@@ -1340,6 +1972,27 @@ static void parse_conf_option(r_cfg_t *cfg, int opt, char *arg)
             cfg->after_successful_events_flag = atobv(arg, 1);
         }
         break;
+    case 'B':
+        if (!arg) {
+            fprintf(stderr, "Wideband option requires argument: -B <center>:<bandwidth>[:<channels>]\n");
+            fprintf(stderr, "  Use when ISM band wider than single-freq capture:\n");
+            fprintf(stderr, "    433: band=1.74M > 250k -> -B 433.92M:2M:8  (wideband needed)\n");
+            fprintf(stderr, "    868: band=600k  < 1M   -> -f 868.5M        (single-freq OK)\n");
+            fprintf(stderr, "    915: band=26M   > 1M   -> -B 915M:8M:16    (wideband needed)\n");
+            usage(1);
+        }
+        if (parse_wideband_spec(arg, &cfg->wideband_center, &cfg->wideband_bandwidth,
+                                &cfg->wideband_channels) == 0) {
+            cfg->wideband_mode = 1;
+            cfg->wideband_spacing = cfg->wideband_bandwidth / (float)cfg->wideband_channels;
+            fprintf(stderr, "Wideband scanning: center=%.3f MHz, bandwidth=%.1f MHz, %d channels\n",
+                    cfg->wideband_center / 1e6f, cfg->wideband_bandwidth / 1e6f,
+                    cfg->wideband_channels);
+        } else {
+            fprintf(stderr, "Invalid wideband spec: %s\n", arg);
+            usage(1);
+        }
+        break;
     default:
         usage(1);
         break;
@@ -1508,15 +2161,27 @@ static int start_sdr(r_cfg_t *cfg)
     cfg->demod->sample_size = sdr_get_sample_size(cfg->dev);
     // cfg->demod->sample_signed = sdr_get_sample_signed(cfg->dev);
 
+    /* CF32 and CS16 always use magnitude estimation (no amplitude option).
+     * Force use_mag_est so pulse detection thresholds use the correct scale. */
+    if (cfg->demod->sample_size >= SDR_SAMPLE_SIZE_CS16
+            && !cfg->demod->use_mag_est) {
+        cfg->demod->use_mag_est = 1;
+        pulse_detect_set_levels(cfg->demod->pulse_detect,
+                cfg->demod->use_mag_est, cfg->demod->level_limit,
+                cfg->demod->min_level, cfg->demod->min_snr,
+                cfg->demod->detect_verbosity);
+    }
+
+    /* Apply device settings first (HD mode must be set before sample rate) */
+    sdr_apply_settings(cfg->dev, cfg->settings_str, 1);
+
     /* Set the sample rate */
     sdr_set_sample_rate(cfg->dev, cfg->samp_rate, 1); // always verbose
 
     if (cfg->verbosity || cfg->demod->level_limit < 0.0)
         print_logf(LOG_NOTICE, "Input", "Bit detection level set to %.1f%s.", cfg->demod->level_limit, (cfg->demod->level_limit < 0.0 ? "" : " (Auto)"));
 
-    sdr_apply_settings(cfg->dev, cfg->settings_str, 1); // always verbose for soapy
-
-    /* Enable automatic gain if gain_str empty (or 0 for RTL-SDR), set manual gain otherwise */
+    /* Enable automatic gain if gain_str empty (or 0 for HydraSDR), set manual gain otherwise */
     sdr_set_tuner_gain(cfg->dev, cfg->gain_str, 1); // always verbose
 
     if (cfg->ppm_error) {
@@ -1529,6 +2194,9 @@ static int start_sdr(r_cfg_t *cfg)
         print_log(LOG_ERROR, "Input", "Failed to reset buffers.");
     }
     sdr_activate(cfg->dev);
+
+    /* Show final gain state before starting */
+    sdr_show_gain_state(cfg->dev);
 
     if (cfg->verbosity) {
         print_log(LOG_NOTICE, "Input", "Reading samples in async mode...");
@@ -1641,6 +2309,37 @@ int main(int argc, char **argv) {
     }
 
     parse_conf_args(cfg, argc, argv);
+
+    /* Wideband scanning mode: setup frequency and sample rate */
+    if (cfg->wideband_mode) {
+        /* Set center frequency to wideband center */
+        cfg->frequency[0] = (uint32_t)cfg->wideband_center;
+        cfg->frequencies = 1;
+        cfg->frequency_index = 0;
+
+        /* Calculate minimum sample rate needed */
+        uint32_t min_rate = (uint32_t)(cfg->wideband_bandwidth * WIDEBAND_BW_MARGIN);
+        if (cfg->samp_rate < min_rate) {
+            cfg->samp_rate = min_rate;
+            /* Round up to HydraSDR native sample rates (no resampling needed) */
+            if (cfg->samp_rate <= WIDEBAND_RATE_2M5)
+                cfg->samp_rate = WIDEBAND_RATE_2M5;
+            else if (cfg->samp_rate <= WIDEBAND_RATE_5M)
+                cfg->samp_rate = WIDEBAND_RATE_5M;
+            else
+                cfg->samp_rate = WIDEBAND_RATE_10M;
+        }
+        print_logf(LOG_NOTICE, "Wideband", "Sample rate set to %u Hz for %.1f MHz bandwidth",
+                   cfg->samp_rate, cfg->wideband_bandwidth / 1e6f);
+
+        /* Allocate and initialize the channelizer */
+        cfg->channelizer = calloc(1, sizeof(channelizer_t));
+        if (!cfg->channelizer) {
+            FATAL_CALLOC("channelizer");
+        }
+        /* Channelizer will be initialized later when we know the actual sample rate from SDR */
+    }
+
     // apply hop defaults and set first frequency
     if (cfg->frequencies == 0) {
         cfg->frequency[0] = DEFAULT_FREQUENCY;
@@ -1912,6 +2611,16 @@ int main(int argc, char **argv) {
                 print_logf(LOG_ERROR, "Input", "Input format invalid \"%s\"", file_info_string(&demod->load_info));
                 break;
             }
+            /* CS16 and CF32 always use magnitude estimation.
+             * Force use_mag_est so pulse detection thresholds match. */
+            if (demod->sample_size >= SDR_SAMPLE_SIZE_CS16
+                    && !demod->use_mag_est) {
+                demod->use_mag_est = 1;
+                pulse_detect_set_levels(demod->pulse_detect,
+                        demod->use_mag_est, demod->level_limit,
+                        demod->min_level, demod->min_snr,
+                        demod->detect_verbosity);
+            }
             if (cfg->verbosity >= LOG_NOTICE) {
                 print_logf(LOG_NOTICE, "Input", "Input format \"%s\"", file_info_string(&demod->load_info));
             }
@@ -2001,7 +2710,7 @@ int main(int argc, char **argv) {
             } while (n_read != 0 && !cfg->exit_async);
 
             // Call a last time with cleared samples to ensure EOP detection
-            if (demod->sample_size == 2) { // CU8
+            if (demod->sample_size == SDR_SAMPLE_SIZE_CU8) {
                 memset(test_mode_buf, 128, DEFAULT_BUF_LENGTH); // 128 is 0 in unsigned data
                 // or is 127.5 a better 0 in cu8 data?
                 //for (unsigned long n = 0; n < DEFAULT_BUF_LENGTH/2; n++)
@@ -2054,9 +2763,6 @@ int main(int argc, char **argv) {
 #else
     SetConsoleCtrlHandler((PHANDLER_ROUTINE)console_handler, TRUE);
 #endif
-
-    // TODO: remove this before next release
-    print_log(LOG_NOTICE, "Input", "The internals of input handling changed, read about and report problems on PR #1978");
 
     if (cfg->dev_mode != DEVICE_MODE_MANUAL) {
         r = start_sdr(cfg);

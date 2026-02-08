@@ -5,8 +5,10 @@ rtl_433 (despite the name) is a generic data receiver, mainly for the 433.92 MHz
 The official source code is in the https://github.com/merbanan/rtl_433/ repository.
 For more documentation and related projects see the https://triq.org/ site.
 
-It works with [RTL-SDR](https://github.com/osmocom/rtl-sdr/) and/or [SoapySDR](https://github.com/pothosware/SoapySDR/).
+It works with [RTL-SDR](https://github.com/osmocom/rtl-sdr/), [SoapySDR](https://github.com/pothosware/SoapySDR/), and [HydraSDR](https://github.com/hydrasdr/hydrasdr-host).
 Actively tested and supported are Realtek RTL2832 based DVB dongles (using RTL-SDR) and LimeSDR ([LimeSDR USB](https://www.crowdsupply.com/lime-micro/limesdr) and [LimeSDR mini](https://www.crowdsupply.com/lime-micro/limesdr-mini) engineering samples kindly provided by [MyriadRf](https://myriadrf.org/)), PlutoSDR, HackRF One (using SoapySDR drivers), as well as SoapyRemote.
+
+**HydraSDR support** requires libhydrasdr v1.1.0 or later (uses hardware agnostic API).
 
 ![rtl_433 screenshot](./docs/screenshot.png)
 
@@ -37,7 +39,7 @@ See [CONTRIBUTING.md](./docs/CONTRIBUTING.md).
 
 ```
 
-  A "rtl_433.conf" file is searched in "./", XDG_CONFIG_HOME e.g. "$HOME/.config/rtl_433/",
+  A "hydrasdr_433.conf" file is searched in "./", XDG_CONFIG_HOME e.g. "$HOME/.config/hydrasdr_433/",
   SYSCONFDIR e.g. "/usr/local/etc/rtl_433/", then command line args will be parsed in order.
 		= General options =
   [-V] Output the version string and exit

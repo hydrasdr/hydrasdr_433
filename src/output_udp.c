@@ -84,6 +84,15 @@ typedef struct {
     SOCKET sock;
 } datagram_client_t;
 
+/* Disable GCC analyzer false positives for Windows socket code.
+   The analyzer doesn't understand that INVALID_SOCKET is the only failure
+   value on Windows (where SOCKET is an unsigned type). */
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wanalyzer-fd-leak"
+#pragma GCC diagnostic ignored "-Wanalyzer-fd-use-without-check"
+#endif
+
 static int datagram_client_open(datagram_client_t *client, const char *host, const char *port)
 {
     if (!host || !port)
@@ -105,7 +114,7 @@ static int datagram_client_open(datagram_client_t *client, const char *host, con
     sock = INVALID_SOCKET;
     for (res = res0; res; res = res->ai_next) {
         sock = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
-        if (sock >= 0) {
+        if (sock != INVALID_SOCKET) {
             client->sock = sock;
             memset(&client->addr, 0, sizeof(client->addr));
             memcpy(&client->addr, res->ai_addr, res->ai_addrlen);
@@ -130,6 +139,10 @@ static int datagram_client_open(datagram_client_t *client, const char *host, con
 
     return 0;
 }
+
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
 
 static void datagram_client_close(datagram_client_t *client)
 {

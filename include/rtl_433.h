@@ -24,9 +24,20 @@
 
 #define INPUT_LINE_MAX 8192 /**< enough for a complete textual bitbuffer (25*256) */
 
+#define WIDEBAND_MAX_CHANNELS 16
+#define WIDEBAND_BW_MARGIN    1.25f  /**< Sample rate margin over bandwidth for filter margins */
+#ifdef HYDRASDR
+/* HydraSDR native sample rates (no resampling needed) */
+#define WIDEBAND_RATE_2M5     2500000   /**< 2.5 MSps - for up to 2 MHz bandwidth */
+#define WIDEBAND_RATE_5M      5000000   /**< 5 MSps - for up to 4 MHz bandwidth */
+#define WIDEBAND_RATE_10M     10000000  /**< 10 MSps - for up to 8 MHz bandwidth */
+#endif
+
 struct sdr_dev;
 struct r_device;
 struct mg_mgr;
+
+typedef struct channelizer channelizer_t;
 
 typedef enum {
     CONVERT_NATIVE,
@@ -131,6 +142,13 @@ typedef struct r_cfg {
     unsigned frames_fsk;    ///< counter of fsk demods for report interval statistic
     unsigned frames_events; ///< counter of decoder events for report interval statistic
     struct mg_mgr *mgr;
+    /* Wideband scanning */
+    int wideband_mode;                  ///< 1 if wideband scanning enabled
+    float wideband_center;              ///< Center frequency of wideband scan (Hz)
+    float wideband_bandwidth;           ///< Total bandwidth to scan (Hz)
+    float wideband_spacing;             ///< Channel spacing (Hz), 0 = auto
+    int wideband_channels;              ///< Number of channels (computed from bandwidth/spacing)
+    channelizer_t *channelizer;         ///< PFB channelizer instance
 } r_cfg_t;
 
 #endif /* INCLUDE_RTL_433_H_ */

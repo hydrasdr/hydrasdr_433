@@ -123,6 +123,53 @@ float magnitude_true_cs16(int16_t const *iq_buf, uint16_t *y_buf, uint32_t len)
     return len > 0 && sum >= len ? MAG_TO_DB((float)sum / len) : MAG_TO_DB(1);
 }
 
+/*============================================================================
+ * CF32 (Complex Float32 IQ) Functions for HydraSDR
+ *
+ * Input: Interleaved float32 I/Q samples in range [-1.0, 1.0]
+ * Output: Scaled to match CU8/CS16 magnitude range (fullscale 16384)
+ *============================================================================*/
+
+/// 122/128, 51/128 Magnitude Estimator for CF32 (HydraSDR native format).
+/// This preserves full ADC resolution throughout the signal chain.
+float magnitude_est_cf32(float const *iq_buf, uint16_t *y_buf, uint32_t len)
+{
+    unsigned long i;
+    uint32_t sum = 0;
+    /* Scale factor: float [-1,1] to internal [0, 16384] fullscale */
+    const float scale = 16384.0f;
+
+    for (i = 0; i < len; i++) {
+        float x = fabsf(iq_buf[2 * i]) * scale;
+        float y = fabsf(iq_buf[2 * i + 1]) * scale;
+        float mi = x < y ? x : y;
+        float mx = x > y ? x : y;
+        /* 122/128 ~= 0.953, 51/128 ~= 0.398 - alpha max plus beta min */
+        float mag_est = 0.953125f * mx + 0.3984375f * mi;
+        y_buf[i] = (uint16_t)(mag_est + 0.5f);  /* max ~22144, fs 16384 */
+        sum += y_buf[i];
+    }
+    return len > 0 && sum >= len ? MAG_TO_DB((float)sum / len) : MAG_TO_DB(1);
+}
+
+/// True Magnitude for CF32 (highest quality, uses sqrtf).
+float magnitude_true_cf32(float const *iq_buf, uint16_t *y_buf, uint32_t len)
+{
+    unsigned long i;
+    uint32_t sum = 0;
+    /* Scale factor: float [-1,1] to internal [0, 16384] fullscale */
+    const float scale = 16384.0f;
+
+    for (i = 0; i < len; i++) {
+        float x = iq_buf[2 * i];
+        float y = iq_buf[2 * i + 1];
+        float mag = sqrtf(x * x + y * y) * scale;
+        y_buf[i] = (uint16_t)(mag + 0.5f);  /* max ~23170, fs 16384 */
+        sum += y_buf[i];
+    }
+    return len > 0 && sum >= len ? MAG_TO_DB((float)sum / len) : MAG_TO_DB(1);
+}
+
 void baseband_low_pass_filter_reset(filter_state_t *lowpass_filter)
 {
     *lowpass_filter = (filter_state_t){0};
@@ -203,7 +250,12 @@ static int16_t atan2_int16(int32_t y, int32_t x)
 
 void baseband_demod_FM_reset(demodfm_state_t *demod_fm)
 {
-    *demod_fm = (demodfm_state_t){0};
+    /* Reset signal state but preserve filter coefficients and rate.
+     * This avoids recalculating coefficients and reprinting the filter message. */
+    demod_fm->xr = 0;
+    demod_fm->xi = 0;
+    demod_fm->xf = 0;
+    demod_fm->yf = 0;
 }
 
 /// Fast Instantaneous frequency and Low Pass filter, CU8 samples
@@ -356,6 +408,80 @@ void baseband_demod_FM_cs16(demodfm_state_t *state, int16_t const *x_buf, int16_
         // y0f      = (alp[1] * y1f + blp[0] * x0f + blp[1] * x1f) >> F_SCALE32;
         y0f      = (alp[1] * y1f + blp[0] * ((int64_t)x0f + x1f)) >> F_SCALE32; // note: blp[0]==blp[1]
         *y_buf++ = y0f >> 16; // not really losing info here, maybe optimize earlier
+    }
+
+    // Store newest sample for next run
+    state->xr = x0r;
+    state->xi = x0i;
+    state->xf = x0f;
+    state->yf = y0f;
+}
+
+/// Fast Instantaneous frequency and Low Pass filter, CF32 samples (HydraSDR).
+/// Input: interleaved float32 I/Q in range [-1.0, 1.0]
+///
+/// Note: Uses INT16_MAX scaling to match the integer atan2 pipeline.
+/// The int32 atan2 and int16 output limit FM demod precision to ~16-bit
+/// equivalent, matching the CS16 code path. A float atan2 pipeline would
+/// give higher precision but at significant CPU cost and pipeline changes.
+void baseband_demod_FM_cf32(demodfm_state_t *state, float const *x_buf, int16_t *y_buf, unsigned long num_samples, uint32_t samp_rate, float low_pass)
+{
+    /* Scale float [-1,1] to int16 range for integer atan2 processing.
+     * INT16_MAX is the maximum safe value: 2 * INT16_MAX^2 < INT32_MAX,
+     * ensuring the phase difference products fit in int32_t for atan2_int32. */
+    const float scale = (float)INT16_MAX;
+
+    // Select filter coeffs, [b,a] = butter(1, cutoff)
+    if (state->rate != samp_rate) {
+        if (low_pass > 1e4f) {
+            low_pass = low_pass / samp_rate;
+        } else if (low_pass >= 1.0f) {
+            low_pass = 1e6f / low_pass / samp_rate;
+        }
+        print_logf(LOG_NOTICE, "Baseband", "CF32 low pass filter for %u Hz at cutoff %.0f Hz, %.1f us",
+                samp_rate, samp_rate * low_pass, 1e6 / (samp_rate * low_pass));
+        double ita  = 1.0 / tan(M_PI_2 * low_pass);
+        double gain = 1.0 / (1.0 + ita);
+        state->alp_32[0] = FIX32(1.0);
+        state->alp_32[1] = FIX32((ita - 1.0) * gain); // scaled by -1
+        state->blp_32[0] = FIX32(gain);
+        state->blp_32[1] = FIX32(gain);
+        state->rate      = samp_rate;
+    }
+    int64_t const *alp = state->alp_32;
+    int64_t const *blp = state->blp_32;
+
+    // Pre-feed old sample
+    int32_t x0r = state->xr;
+    int32_t x0i = state->xi;
+    int32_t x0f = state->xf;
+    int32_t y0f = state->yf;
+
+    for (unsigned n = 0; n < num_samples; n++) {
+        int32_t x1r, x1i;
+        int32_t x1f, y1f;
+        int64_t pr, pi;
+
+        // delay old sample
+        x1r = x0r;
+        x1i = x0i;
+        y1f = y0f;
+        x1f = x0f;
+
+        // get new sample - convert float32 to int32
+        x0r = (int32_t)(x_buf[2 * n + 0] * scale);
+        x0i = (int32_t)(x_buf[2 * n + 1] * scale);
+
+        // Calculate phase difference vector: x[n] * conj(x[n-1])
+        pr = (int64_t)x0r * x1r + (int64_t)x0i * x1i;
+        pi = (int64_t)x0i * x1r - (int64_t)x0r * x1i;
+
+        // Integer atan2 implementation
+        x0f = atan2_int32(pi, pr);
+
+        // Low pass filter
+        y0f      = (alp[1] * y1f + blp[0] * ((int64_t)x0f + x1f)) >> F_SCALE32;
+        *y_buf++ = y0f >> 16;
     }
 
     // Store newest sample for next run

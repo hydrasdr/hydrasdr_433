@@ -142,7 +142,7 @@ static void _term_free(console_t *console)
 
 static BOOL _term_has_color(console_t *console)
 {
-    return console->hnd && !console->redirected;
+    return console && console->hnd && !console->redirected;
 }
 
 static void *_term_init(FILE *fp)
