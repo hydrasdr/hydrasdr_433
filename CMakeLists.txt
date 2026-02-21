@@ -155,6 +155,21 @@ endif()
 find_package(PkgConfig)
 
 ########################################################################
+# Option for native CPU optimizations (hot-path: channelizer, FFT, resampler)
+########################################################################
+option(ENABLE_NATIVE_OPTIMIZATIONS "Use -march=native -ffast-math for DSP hot-path code (not portable)" ON)
+if(ENABLE_NATIVE_OPTIMIZATIONS)
+    if("${CMAKE_C_COMPILER_ID}" STREQUAL "GNU" OR "${CMAKE_C_COMPILER_ID}" MATCHES "Clang")
+        set(DSP_OPTIMIZE_FLAGS "-march=native -ffast-math")
+    elseif(MSVC)
+        set(DSP_OPTIMIZE_FLAGS "/fp:fast /arch:AVX2")
+    endif()
+    if(DSP_OPTIMIZE_FLAGS)
+        message(STATUS "Native DSP optimizations: ${DSP_OPTIMIZE_FLAGS}")
+    endif()
+endif()
+
+########################################################################
 # Option to force ANSI-colored build output (for Ninja)
 ########################################################################
 option(FORCE_COLORED_BUILD "Always produce ANSI-colored build output (GNU/Clang only)." FALSE)

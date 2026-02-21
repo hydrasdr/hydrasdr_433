@@ -87,8 +87,9 @@ static int test_init(void)
 		fprintf(stderr, "FAIL: Wrong number of channels\n");
 		goto cleanup;
 	}
-	if (ch.channel_rate != TEST_SAMPLE_RATE / 4) {
-		fprintf(stderr, "FAIL: Wrong channel rate\n");
+	if (ch.channel_rate != TEST_SAMPLE_RATE / 2) {
+		fprintf(stderr, "FAIL: Wrong channel rate (expected %u, got %u)\n",
+		        (unsigned)(TEST_SAMPLE_RATE / 2), ch.channel_rate);
 		goto cleanup;
 	}
 	if (ch.initialized != 1) {
@@ -404,8 +405,9 @@ static int test_8_channels(void)
 		fprintf(stderr, "FAIL: Wrong number of channels\n");
 		goto cleanup;
 	}
-	if (ch.channel_rate != 312500) {
-		fprintf(stderr, "FAIL: Wrong channel rate\n");
+	if (ch.channel_rate != 625000) {
+		fprintf(stderr, "FAIL: Wrong channel rate (expected 625000, got %u)\n",
+		        ch.channel_rate);
 		goto cleanup;
 	}
 
@@ -482,7 +484,8 @@ static int test_non_aligned_samples(void)
 	printf("Test: non-aligned sample counts (n_samples %% M != 0)...\n");
 
 	int M = 4;
-	int base = 1024; /* aligned sample count */
+	int D = M / 2;    /* Decimation factor for 2x oversampled PFB */
+	int base = 1024;  /* aligned sample count (must be divisible by D) */
 
 	ret = channelizer_init(&ch, M, TEST_CENTER_FREQ, TEST_BANDWIDTH,
 	                       TEST_SAMPLE_RATE, base + M);
@@ -508,18 +511,18 @@ static int test_non_aligned_samples(void)
 	}
 	int aligned_out = out_samples;
 
-	/* Expected: base / M output samples */
-	if (aligned_out != base / M) {
+	/* Expected: base / D output samples (2x oversampled) */
+	if (aligned_out != base / D) {
 		fprintf(stderr, "FAIL: Expected %d output samples, got %d\n",
-		        base / M, aligned_out);
+		        base / D, aligned_out);
 		goto cleanup;
 	}
-	printf("  Aligned (%d samples): %d outputs OK\n", base, aligned_out);
+	printf("  Aligned (%d samples): %d outputs OK (D=%d)\n", base, aligned_out, D);
 
-	/* Test various non-aligned counts */
-	int offsets[] = {1, 2, 3}; /* remainders 1, 2, 3 for M=4 */
-	for (int t = 0; t < 3; t++) {
-		int n = base + offsets[t];
+	/* Test non-aligned counts: offsets that are not multiples of D.
+	 * With D=2, only remainder=1 is non-aligned. */
+	for (int off = 1; off < D; off++) {
+		int n = base + off;
 
 		/* Reinitialize to reset state */
 		channelizer_free(&ch);
@@ -538,8 +541,8 @@ static int test_non_aligned_samples(void)
 
 		/* Should produce same output as aligned (trailing samples dropped) */
 		if (out_samples != aligned_out) {
-			fprintf(stderr, "FAIL: n=%d (%d extra): expected %d outputs, got %d\n",
-			        n, offsets[t], aligned_out, out_samples);
+			fprintf(stderr, "FAIL: n=%d (+%d extra): expected %d outputs, got %d\n",
+			        n, off, aligned_out, out_samples);
 			goto cleanup;
 		}
 
@@ -552,11 +555,11 @@ static int test_non_aligned_samples(void)
 		}
 
 		printf("  Non-aligned (%d samples, +%d extra): %d outputs, "
-		       "DC power=%.3f OK\n", n, offsets[t], out_samples, power);
+		       "DC power=%.3f OK\n", n, off, out_samples, power);
 	}
 
-	/* Test with fewer than M samples - should produce 0 outputs */
-	for (int n = 0; n < M; n++) {
+	/* Test with fewer than D samples - should produce 0 outputs */
+	for (int n = 0; n < D; n++) {
 		channelizer_free(&ch);
 		ret = channelizer_init(&ch, M, TEST_CENTER_FREQ, TEST_BANDWIDTH,
 		                       TEST_SAMPLE_RATE, base + M);
@@ -566,13 +569,13 @@ static int test_non_aligned_samples(void)
 		}
 
 		if (n == 0) {
-			/* n_samples=0 should return error */
+			/* n_samples=0 is a valid no-op: returns 0 with 0 outputs */
 			ret = channelizer_process(&ch, input, 0, channel_out, &out_samples);
-			if (ret == 0) {
-				fprintf(stderr, "FAIL: n=0 should return error\n");
+			if (ret != 0 || out_samples != 0) {
+				fprintf(stderr, "FAIL: n=0 should return 0 with 0 outputs\n");
 				goto cleanup;
 			}
-			printf("  n=0: returns error as expected OK\n");
+			printf("  n=0: returns 0 outputs as expected OK\n");
 		} else {
 			ret = channelizer_process(&ch, input, n, channel_out, &out_samples);
 			if (ret != 0) {
@@ -584,7 +587,7 @@ static int test_non_aligned_samples(void)
 				        n, out_samples);
 				goto cleanup;
 			}
-			printf("  n=%d (< M=%d): 0 outputs OK\n", n, M);
+			printf("  n=%d (< D=%d): 0 outputs OK\n", n, D);
 		}
 	}
 

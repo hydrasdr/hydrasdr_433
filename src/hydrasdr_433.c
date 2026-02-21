@@ -616,14 +616,14 @@ static void process_wideband_channels(r_cfg_t *cfg, struct dm_state *demod,
          * channel rate (156k-625k) works correctly.
          */
         uint32_t target_rate = ch->channel_rate;
-        size_t max_chan_samples = (size_t)n_samples / (size_t)ch->num_channels + 1;
+        size_t max_chan_samples = (size_t)n_samples / (size_t)ch->decimation_factor + 1;
         if (init_wideband_channel_state(demod, ch->num_channels, ch->channel_rate,
                                         target_rate, max_chan_samples) != 0) {
             print_log(LOG_ERROR, "Wideband", "Failed to allocate per-channel state");
             cfg->wideband_mode = 0;
             return;
         }
-        print_logf(LOG_NOTICE, "Wideband", "Per-channel decoder rate: %u Hz (no resampling)",
+        print_logf(LOG_NOTICE, "Wideband", "Per-channel decoder rate: %u Hz (2x oversampled, no resampling)",
                    target_rate);
     }
 
@@ -644,7 +644,7 @@ static void process_wideband_channels(r_cfg_t *cfg, struct dm_state *demod,
      * Sample offset for pulse detection needs to be scaled to channel rate.
      * input_pos is in wideband samples, but pulse_detect works at channel rate.
      */
-    uint64_t channel_sample_offset = cfg->input_pos / (uint64_t)ch->num_channels;
+    uint64_t channel_sample_offset = cfg->input_pos / (uint64_t)ch->decimation_factor;
 
     /* Safety check: ensure channel state is allocated */
     if (ch->num_channels > demod->wideband_channels_allocated) {

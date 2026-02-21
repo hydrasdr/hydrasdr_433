@@ -1556,10 +1556,10 @@ static void run_benchmark(void)
 	 * Bandwidth Analysis Table
 	 */
 	printf("\n  Channel Bandwidth Analysis:\n");
-	printf("  ----------------------------------------------------------\n");
-	printf("  %-20s | %9s | %9s | %9s | %s\n",
-	       "Configuration", "Ch Spacing", "Usable BW", "Edge Guard", "250K OK?");
-	printf("  --------------------+-----------+-----------+-----------+---------\n");
+	printf("  -------------------------------------------------------------\n");
+	printf("  %-20s | %10s | %10s | %10s | %-8s\n",
+	       "Configuration", "Ch Spacing", " Usable BW", "Edge Guard", "250K OK?");
+	printf("  ---------------------+------------+------------+------------+---------\n");
 
 	for (int c = 0; c < num_configs; c++) {
 		uint32_t ch_spacing = configs[c].sample_rate / configs[c].num_channels;
@@ -1582,10 +1582,10 @@ static void run_benchmark(void)
 	 * Performance Benchmark Table
 	 */
 	printf("\n  Performance Benchmark:\n");
-	printf("  ----------------------------------------------------------\n");
-	printf("  %-20s | %10s | %10s | %12s\n",
-	       "Configuration", "Throughput", "RT Margin", "Ch Out Rate");
-	printf("  --------------------+------------+------------+--------------\n");
+	printf("  -------------------------------------------------------------\n");
+	printf("  %-20s | %11s | %10s | %12s\n",
+	       "Configuration", " Throughput", " RT Margin", " Ch Out Rate");
+	printf("  ---------------------+-------------+------------+-------------\n");
 
 	for (int c = 0; c < num_configs; c++) {
 		ret = channelizer_init(&ch, configs[c].num_channels, TEST_CENTER_FREQ,
@@ -1611,7 +1611,7 @@ static void run_benchmark(void)
 		double samples_processed = (double)n_input * iterations;
 		double msps = samples_processed / elapsed_ms / 1000.0;
 		double rt_margin = msps / ((double)configs[c].sample_rate / 1e6);
-		uint32_t ch_rate = configs[c].sample_rate / configs[c].num_channels;
+		uint32_t ch_rate = ch.channel_rate;
 
 		printf("  %-20s | %6.1f Msps | %6.1fx RT | %7u ksps\n",
 		       configs[c].name, msps, rt_margin, ch_rate / 1000);
@@ -1628,16 +1628,16 @@ static void run_benchmark(void)
 	float ex_usable = ex_spacing * CHANNELIZER_CUTOFF_RATIO;
 	float ex_guard = (ex_spacing - ex_usable) / 2.0f;
 	printf("\n  Band Edge Diagram (8-ch @ 2.5 Msps, spacing=312.5 kHz):\n");
-	printf("  ----------------------------------------------------------\n");
-	printf("    |<------ Channel Spacing: %.1f kHz ------>|\n", ex_spacing);
-	printf("    |                                          |\n");
-	printf("    |  Guard  |<-- Usable: %.0f kHz -->|  Guard |\n", ex_usable);
-	printf("    | %.2fk |                       | %.2fk |\n", ex_guard, ex_guard);
-	printf("    |         |                       |        |\n");
-	printf("  __|_________|_______________________|________|___\n");
-	printf("    ^         ^                       ^        ^\n");
-	printf("  -fs/2M   -Usable/2               Usable/2  fs/2M\n");
-	printf("  (edge)   (passband)             (passband) (edge)\n");
+	printf("  -------------------------------------------------------------\n");
+	printf("    |<----------- Channel Spacing: %.1f kHz ----------->|\n", ex_spacing);
+	printf("    |                                                      |\n");
+	printf("    |  Guard  |<------ Usable: %.0f kHz ------->|  Guard  |\n", ex_usable);
+	printf("    | %5.1fk  |                                | %5.1fk  |\n", ex_guard, ex_guard);
+	printf("    |         |                                |         |\n");
+	printf("  __|_________|________________________________|_________|___\n");
+	printf("    ^         ^                                ^         ^\n");
+	printf("  -fs/2M   -Usable/2                        Usable/2  fs/2M\n");
+	printf("  (edge)   (passband)                      (passband) (edge)\n");
 
 	printf("\n  Legend:\n");
 	printf("    Throughput  = input samples processed per second\n");

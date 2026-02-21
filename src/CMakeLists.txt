@@ -307,6 +307,12 @@ if("${CMAKE_C_COMPILER_ID}" STREQUAL "GNU" OR "${CMAKE_C_COMPILER_ID}" MATCHES "
     set_source_files_properties(mongoose.c PROPERTIES COMPILE_FLAGS "-w")
 endif()
 
+# Apply native DSP optimizations to hot-path files
+if(DSP_OPTIMIZE_FLAGS)
+    set_source_files_properties(channelizer.c cf32_resampler.c
+        PROPERTIES COMPILE_FLAGS "${DSP_OPTIMIZE_FLAGS}")
+endif()
+
 # Link r_433 with hydrasdr_lfft for channelizer FFT operations
 target_link_libraries(r_433 hydrasdr_lfft)
 target_include_directories(r_433 PUBLIC ${PROJECT_SOURCE_DIR}/external/hydrasdr-lfft)

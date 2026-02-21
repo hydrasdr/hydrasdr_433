@@ -105,6 +105,34 @@ endif()
 
 add_test(pipeline-test pipeline-test)
 
+add_executable(channelizer-os-test channelizer-os-test.c ../src/channelizer.c)
+target_include_directories(channelizer-os-test PRIVATE
+    ${PROJECT_SOURCE_DIR}/include
+    ${PROJECT_SOURCE_DIR}/external/hydrasdr-lfft)
+target_link_libraries(channelizer-os-test hydrasdr_lfft)
+
+if(UNIX)
+target_link_libraries(channelizer-os-test m)
+endif()
+
+add_test(channelizer-os-test channelizer-os-test)
+
+add_executable(channelizer-profile channelizer-profile.c ../src/channelizer.c)
+target_include_directories(channelizer-profile PRIVATE
+    ${PROJECT_SOURCE_DIR}/include
+    ${PROJECT_SOURCE_DIR}/external/hydrasdr-lfft)
+target_link_libraries(channelizer-profile hydrasdr_lfft)
+
+if(UNIX)
+target_link_libraries(channelizer-profile m)
+endif()
+
+# Apply DSP optimization flags to hot-path sources compiled in test targets
+if(DSP_OPTIMIZE_FLAGS)
+    set_source_files_properties(../src/channelizer.c ../src/cf32_resampler.c
+        PROPERTIES COMPILE_FLAGS "${DSP_OPTIMIZE_FLAGS}")
+endif()
+
 ########################################################################
 # Define and build all unit tests
 ########################################################################

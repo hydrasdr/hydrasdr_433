@@ -226,7 +226,7 @@ static int test_init(int num_channels, uint32_t sample_rate)
 	                           TEST_BANDWIDTH, sample_rate, BUFFER_SIZE_DEFAULT);
 	TEST_ASSERT(ret == 0, "initialization failed");
 	TEST_ASSERT(ch.num_channels == num_channels, "wrong channel count");
-	TEST_ASSERT(ch.channel_rate == sample_rate / (uint32_t)num_channels, "wrong channel rate");
+	TEST_ASSERT(ch.channel_rate == sample_rate / (uint32_t)ch.decimation_factor, "wrong channel rate");
 	TEST_ASSERT(ch.initialized == 1, "not marked initialized");
 
 	/* Verify channel spacing */
@@ -510,7 +510,7 @@ static int test_decimation(int num_channels, uint32_t sample_rate)
 		ret = channelizer_process(&ch, input, n_input, channel_out, &out_samples);
 		TEST_ASSERT(ret == 0, "processing failed");
 
-		int expected_out = n_input / num_channels;
+		int expected_out = n_input / ch.decimation_factor;
 		if (g_verbose)
 			printf("    %d in -> %d out (expected %d)\n",
 			       n_input, out_samples, expected_out);
@@ -566,7 +566,7 @@ static int test_continuous_processing(int num_channels, uint32_t sample_rate)
 		TEST_ASSERT(power > CONTINUOUS_POWER_MIN, "power dropped in continuous processing");
 	}
 
-	int expected_total = (n_input * num_blocks) / num_channels;
+	int expected_total = (n_input * num_blocks) / ch.decimation_factor;
 	TEST_ASSERT(total_out_samples == expected_total, "total samples mismatch");
 
 	free(input);

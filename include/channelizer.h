@@ -2,10 +2,14 @@
     Polyphase Filter Bank Channelizer for HydraSDR wideband scanning.
 
     Implementation based on liquid-dsp's firpfbch algorithm by Joseph Gaeddert.
-    Implements an M-channel critically-sampled analysis PFB channelizer.
+    Implements an M-channel 2x oversampled analysis PFB channelizer (OS-PFB).
 
     Architecture:
-        Input @ fs  -->  [Polyphase Filter]  -->  [M-point FFT]  -->  M channels @ fs/M
+        Input @ fs  -->  [Polyphase Filter]  -->  [M-point FFT]  -->  M channels @ 2*fs/M
+
+    Decimation factor D = M/2 (instead of D = M for critically-sampled).
+    Adjacent channels overlap in frequency, eliminating dead zones at
+    channel boundaries where the filter transition band attenuates signals.
 
     The polyphase structure reorders the FIR filter into M branches, processes
     samples via commutator pattern into window buffers, and uses an FFT for
@@ -32,8 +36,8 @@
         - Passband flatness: 0 dB ±0.1 dB
         - Adjacent channel rejection: >41 dB (8-ch), >44 dB (4-ch)
         - Non-adjacent rejection: >49 dB
-        - Critically-sampled: adjacent channels overlap in transition band
-        - Real-time margin: ~10x at 2.5 MSps
+        - 2x oversampled: adjacent channels overlap, no dead zones
+        - Real-time margin: ~5x at 2.5 MSps
 
     Known limitations:
         - Channel M/2 (Nyquist) has frequency ambiguity; avoid for signals
@@ -66,7 +70,7 @@
  * Polyphase Filter Bank Channelizer
  *
  * Splits wideband IQ input into M equal-width frequency channels.
- * Uses critically-sampled PFB: output rate per channel = input_rate / M
+ * Uses 2x oversampled PFB: output rate per channel = input_rate / (M/2)
  */
 typedef struct channelizer {
     int num_channels;           /* M - number of output channels */
@@ -78,7 +82,7 @@ typedef struct channelizer {
     float channel_spacing;      /* Spacing between channel centers (Hz) */
 
     uint32_t input_rate;        /* Wideband input sample rate (Hz) */
-    uint32_t channel_rate;      /* Per-channel output rate = input_rate / M */
+    uint32_t channel_rate;      /* Per-channel output rate = input_rate / decimation_factor */
 
     /* Polyphase filter coefficients [num_channels][taps_per_branch] */
     float *filter_coeffs;       /* Contiguous storage for branches */
@@ -93,6 +97,7 @@ typedef struct channelizer {
     int *window_write_pos;      /* Per-branch write position [num_channels] */
     int filter_index;           /* Running filter index for commutator */
     int channel_mask;           /* num_channels - 1 for fast modulo */
+    int decimation_factor;      /* D = M/2 for 2x oversampled PFB */
 
     /* FFT work buffers (interleaved CF32 format) */
     float *fft_in;              /* FFT input [num_channels * 2] (I/Q interleaved) */
@@ -125,7 +130,7 @@ typedef struct channelizer {
  * @return 0 on success, -1 on error
  *
  * The channelizer will create num_channels outputs, each with:
- *   - Sample rate: input_rate / num_channels
+ *   - Sample rate: 2 * input_rate / num_channels (2x oversampled)
  *   - Bandwidth: bandwidth / num_channels
  *   - Center frequencies evenly spaced across the input bandwidth
  */
@@ -145,7 +150,7 @@ int channelizer_init(channelizer_t *ch, int num_channels,
  * @return 0 on success, -1 on error
  *
  * Each output buffer contains CF32 (interleaved I/Q) at channel_rate.
- * Output samples = n_samples / num_channels (critically sampled).
+ * Output samples = n_samples / decimation_factor (2x oversampled).
  */
 int channelizer_process(channelizer_t *ch, const float *input, int n_samples,
                         float **channel_out, int *out_samples);

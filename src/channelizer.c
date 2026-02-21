@@ -2,7 +2,7 @@
     Polyphase Filter Bank Channelizer for HydraSDR wideband scanning.
 
     Implementation based on liquid-dsp's firpfbch algorithm by Joseph Gaeddert.
-    Implements an M-channel critically-sampled analysis PFB.
+    Implements an M-channel 2x oversampled analysis PFB (D = M/2).
 
     Algorithm:
       1. Input samples are pushed into polyphase filter branches via commutator
@@ -225,6 +225,8 @@ int channelizer_init(channelizer_t *ch, int num_channels,
         return -1;
     if (!is_power_of_2(num_channels))
         return -1;
+    if (input_rate == 0)
+        return -1;
 
     int M = num_channels;
     int m = FILTER_SEMI_LEN;  /* Filter semi-length in symbols */
@@ -238,7 +240,8 @@ int channelizer_init(channelizer_t *ch, int num_channels,
      * The FFT naturally produces bins at multiples of fs/M. */
     ch->channel_spacing = (float)input_rate / (float)M;
     ch->input_rate = input_rate;
-    ch->channel_rate = input_rate / (uint32_t)M;
+    ch->decimation_factor = M / 2;
+    ch->channel_rate = input_rate / (uint32_t)ch->decimation_factor;
     ch->taps_per_branch = p;
     ch->total_taps = h_len;
 
@@ -368,7 +371,7 @@ int channelizer_init(channelizer_t *ch, int num_channels,
     }
 
     /* Allocate output buffers (minimum 2 to avoid degenerate edge cases) */
-    ch->output_buf_size = (max_input / (size_t)M) + 1;
+    ch->output_buf_size = (max_input / (size_t)ch->decimation_factor) + 1;
     if (ch->output_buf_size < 2)
         ch->output_buf_size = 2;
     size_t total_output = ch->output_buf_size * (size_t)M * 2;
@@ -494,18 +497,24 @@ static void analyzer_run(channelizer_t *ch, float *out)
 int channelizer_process(channelizer_t *ch, const float *input, int n_samples,
                         float **channel_out, int *out_samples)
 {
-    if (!ch->initialized || !input || n_samples <= 0)
+    if (!ch->initialized || !input || n_samples < 0)
         return -1;
+    if (n_samples == 0) {
+        *out_samples = 0;
+        return 0;
+    }
 
     int M = ch->num_channels;
     int M_mask = ch->channel_mask;
+    int D = ch->decimation_factor;
     int w_mask = ch->window_mask;
     int output_idx = 0;
 
-    /* Process M input samples at a time to produce 1 output sample per channel */
-    for (int s = 0; s + M <= n_samples; s += M) {
-        /* Push M samples into analyzer (inlined for locality) */
-        for (int i = 0; i < M; i++) {
+    /* Process D input samples at a time to produce 1 output sample per channel.
+     * D = M/2 for 2x oversampled PFB (push half a block per FFT). */
+    for (int s = 0; s + D <= n_samples; s += D) {
+        /* Push D samples into analyzer (inlined for locality) */
+        for (int i = 0; i < D; i++) {
             int idx = ch->filter_index;
             int pos = ch->window_write_pos[idx];
             float *win = ch->window_ptrs[idx];
@@ -524,11 +533,26 @@ int channelizer_process(channelizer_t *ch, const float *input, int n_samples,
         /* Run analyzer to get M channel outputs (interleaved format) */
         analyzer_run(ch, ch->fft_out);
 
-        /* Store outputs directly (identity mapping, no indirection) */
+        /* Store outputs with OS-PFB phase correction.
+         *
+         * The 2x oversampled PFB introduces a systematic phase rotation
+         * of exp(-j*pi*k*n) for channel k at output index n, because the
+         * commutator only advances D=M/2 steps per output (not a full
+         * cycle). Correct by multiplying by exp(j*pi*k*n) = (-1)^(k*n).
+         *
+         * Even channels (k=0,2,4,...): correction = 1 (no change)
+         * Odd channels  (k=1,3,5,...): negate on odd output index
+         */
         if ((size_t)output_idx < ch->output_buf_size) {
             for (int c = 0; c < M; c++) {
-                ch->channel_outputs[c][output_idx * 2 + 0] = ch->fft_out[c * 2 + 0];
-                ch->channel_outputs[c][output_idx * 2 + 1] = ch->fft_out[c * 2 + 1];
+                float I = ch->fft_out[c * 2 + 0];
+                float Q = ch->fft_out[c * 2 + 1];
+                if ((c & 1) && (output_idx & 1)) {
+                    I = -I;
+                    Q = -Q;
+                }
+                ch->channel_outputs[c][output_idx * 2 + 0] = I;
+                ch->channel_outputs[c][output_idx * 2 + 1] = Q;
             }
             output_idx++;
         }
