@@ -28,6 +28,7 @@
 
 /* Include the actual resampler implementation from the shared header */
 #include "cf32_resampler.h"
+#include "build_info.h"
 
 /*============================================================================
  * Test Constants (avoid magic numbers)
@@ -1180,6 +1181,7 @@ int main(int argc, char *argv[])
     printf("  Testing actual implementation from\n");
     printf("  include/cf32_resampler.h\n");
     printf("===========================================\n");
+    printf("  Build: " BUILD_INFO_STR "\n");
 
     /* Filter design characterization tests */
     test_filter_dc_gain();

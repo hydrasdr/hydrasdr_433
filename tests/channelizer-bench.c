@@ -28,6 +28,7 @@
 #include <math.h>
 #include <time.h>
 #include "channelizer.h"
+#include "build_info.h"
 #include "rtl_433.h"
 
 #ifndef M_PI
@@ -989,6 +990,8 @@ int main(int argc, char *argv[])
 	printf("*************************************************************\n");
 	printf("*         PFB Channelizer Comprehensive Test Suite          *\n");
 	printf("*************************************************************\n");
+	printf("  Build: " BUILD_INFO_STR "\n");
+	printf("  %s\n", channelizer_build_info());
 
 	run_correctness_tests();
 	print_benchmark_results();

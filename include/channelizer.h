@@ -88,20 +88,23 @@ typedef struct channelizer {
     float *filter_coeffs;       /* Contiguous storage for branches */
     float **branches;           /* Pointer array to each branch */
 
-    /* Window buffers for each polyphase branch (circular, interleaved I/Q) */
-    float *window_iq;           /* Contiguous storage: M * window_alloc * 2 floats */
-    float **window_ptrs;        /* [num_channels] pointers into window_iq */
+    /* Window buffers for each polyphase branch (circular, SoA split I/Q) */
+    float *window_re;           /* Real parts: M * window_alloc floats */
+    float *window_im;           /* Imag parts: M * window_alloc floats */
+    float **window_re_ptrs;     /* [M] pointers into window_re */
+    float **window_im_ptrs;     /* [M] pointers into window_im */
     int window_len;             /* Logical length of each window = taps_per_branch */
-    int window_alloc;           /* Allocated size (power of 2, >= window_len) */
-    int window_mask;            /* window_alloc - 1 for fast modulo */
+    int window_alloc;           /* Allocated size = 2 * window_len (linear buffer) */
     int *window_write_pos;      /* Per-branch write position [num_channels] */
     int filter_index;           /* Running filter index for commutator */
     int channel_mask;           /* num_channels - 1 for fast modulo */
     int decimation_factor;      /* D = M/2 for 2x oversampled PFB */
 
-    /* FFT work buffers (interleaved CF32 format) */
-    float *fft_in;              /* FFT input [num_channels * 2] (I/Q interleaved) */
-    float *fft_out;             /* FFT output [num_channels * 2] (I/Q interleaved) */
+    /* FFT work buffers (SoA split format) */
+    float *fft_in_re;           /* FFT input real [num_channels] */
+    float *fft_in_im;           /* FFT input imag [num_channels] */
+    float *fft_out_re;          /* FFT output real [num_channels] */
+    float *fft_out_im;          /* FFT output imag [num_channels] */
 
     /* hydrasdr-lfft plan for M-point FFT */
     hlfft_plan_t *fft_plan;     /* FFT plan for M-point forward FFT */
@@ -171,5 +174,16 @@ float channelizer_get_channel_freq(channelizer_t *ch, int channel);
  * @param ch Channelizer context to free
  */
 void channelizer_free(channelizer_t *ch);
+
+/**
+ * Get build info string for the channelizer DSP hot path.
+ *
+ * Returns a string describing the compiler, SIMD capabilities, and
+ * optimization flags used to compile the channelizer (which may differ
+ * from the main executable due to per-file DSP optimization flags).
+ *
+ * @return Static string, e.g. "Release GCC 15.2.0 AVX-512 FMA fast-math"
+ */
+const char *channelizer_build_info(void);
 
 #endif /* INCLUDE_CHANNELIZER_H_ */

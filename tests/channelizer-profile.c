@@ -22,6 +22,7 @@
 #include <math.h>
 #include <time.h>
 #include "channelizer.h"
+#include "build_info.h"
 #include "hydrasdr_lfft.h"
 #include "rtl_433.h"
 
@@ -574,6 +575,8 @@ int main(void)
 	printf("============================================================\n");
 	printf("    PFB Channelizer Profiler + Correctness\n");
 	printf("============================================================\n");
+	printf("  Build: " BUILD_INFO_STR "\n");
+	printf("  %s\n", channelizer_build_info());
 
 	/*
 	 * Part 1: Correctness tests

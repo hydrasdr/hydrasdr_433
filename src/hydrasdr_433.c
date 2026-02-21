@@ -55,6 +55,7 @@
 #include "write_sigrok.h"
 #include "mongoose.h"
 #include "channelizer.h"
+#include "build_info.h"
 
 #ifdef _WIN32
 #include <io.h>
@@ -128,6 +129,7 @@ r_device *flex_create_device(char *spec); // maybe put this in some header file?
 static void print_version(void)
 {
     fprintf(stderr, "%s\n", version_string());
+    fprintf(stderr, "Build: " BUILD_INFO_STR ", %s\n", channelizer_build_info());
 }
 
 _Noreturn
@@ -819,6 +821,10 @@ static void process_wideband_channels(r_cfg_t *cfg, struct dm_state *demod,
                     fprintf(stderr, "[Wideband] Ch%d OOK: %u pulses, freq=%.3f MHz\n",
                             chan, chan_pulse->num_pulses, chan_freq / 1e6f);
 
+                /* Copy per-channel metrics to global pulse_data so that
+                 * data_acquired_handler() reports correct Freq/RSSI/SNR/Noise.
+                 * The handler reads from cfg->demod->pulse_data (the global). */
+                demod->pulse_data = *chan_pulse;
                 p_events += run_ook_demods(&demod->r_devs, chan_pulse);
                 cfg->total_frames_ook += 1;
                 cfg->total_frames_events += p_events > 0;
@@ -855,6 +861,9 @@ static void process_wideband_channels(r_cfg_t *cfg, struct dm_state *demod,
                     fprintf(stderr, "[Wideband] Ch%d FSK: %u pulses, freq=%.3f MHz\n",
                             chan, chan_fsk_pulse->num_pulses, chan_freq / 1e6f);
 
+                /* Copy per-channel metrics to global fsk_pulse_data so that
+                 * data_acquired_handler() reports correct Freq/RSSI/SNR/Noise. */
+                demod->fsk_pulse_data = *chan_fsk_pulse;
                 p_events += run_fsk_demods(&demod->r_devs, chan_fsk_pulse);
                 cfg->total_frames_fsk += 1;
                 cfg->total_frames_events += p_events > 0;

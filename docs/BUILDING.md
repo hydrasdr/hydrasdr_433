@@ -12,7 +12,7 @@ hydrasdr_433 is a fork of rtl_433 with native HydraSDR support and wideband scan
 
 ## Prerequisites
 
-* CMake 3.16 or later
+* CMake 3.16 or later (CMake 4.0+ required for VS2026)
 * C99 compiler (GCC, Clang, or MSVC)
 * HydraSDR library v1.1.0 (local build required)
 * Optional: librtlsdr, SoapySDR libraries
@@ -96,19 +96,51 @@ build_vs2022/src/Release/
 └── libusb-1.0.dll       # Copied automatically
 ```
 
+### Visual Studio 2026 Build (build_vs2026)
+
+Uses MSVC 19.50 compiler. Requires CMake 4.0+ (the version bundled with MSYS2/MinGW64 or VS2026).
+
+```cmd
+:: Use cmd.exe (not MSYS2 terminal) to avoid header conflicts
+
+git clone https://github.com/hydrasdr/hydrasdr_433.git
+cd hydrasdr_433
+cmake -B build_vs2026 -G "Visual Studio 18 2026" -A x64 ^
+    -DENABLE_OPENSSL=OFF ^
+    -DHYDRASDR_DIR=C:/hydrasdr-host
+cmake --build build_vs2026 --config Release
+
+:: Run tests
+build_vs2026\tests\Release\channelizer-bench.exe
+build_vs2026\external\hydrasdr-lfft\Release\lfft_test.exe
+```
+
+**Output:**
+```
+build_vs2026/src/Release/
+├── hydrasdr_433.exe
+├── hydrasdr.dll         # Copied automatically
+└── libusb-1.0.dll       # Copied automatically
+```
+
+**Note:** `-DENABLE_OPENSSL=OFF` is required when MSYS2 is in the system PATH. Without it, CMake finds MinGW's OpenSSL headers (`D:\msys64\mingw64\include`) which are incompatible with MSVC and cause compile errors in system headers.
+
 ### Build from MSYS2 Terminal (Alternative)
 
-If using MSYS2 terminal for VS2022 builds, use explicit cmake path to avoid MinGW header conflicts:
+If using MSYS2 terminal for VS builds, disable OpenSSL to avoid MinGW header conflicts:
 
 ```bash
-# Clear MinGW from PATH for VS2022
-export PATH="/d/msys64/usr/bin:$PATH"
-
+# VS2022
 /d/msys64/mingw64/bin/cmake -B build_vs2022 -G "Visual Studio 17 2022" -A x64 \
     -DENABLE_OPENSSL=OFF \
     -DHYDRASDR_DIR="C:/hydrasdr-host"
-
 /d/msys64/mingw64/bin/cmake --build build_vs2022 --config Release
+
+# VS2026 (requires cmake 4.0+)
+/d/msys64/mingw64/bin/cmake -B build_vs2026 -G "Visual Studio 18 2026" -A x64 \
+    -DENABLE_OPENSSL=OFF \
+    -DHYDRASDR_DIR="C:/hydrasdr-host"
+/d/msys64/mingw64/bin/cmake --build build_vs2026 --config Release
 ```
 
 ## Linux / macOS
@@ -132,10 +164,10 @@ cmake --build build
 
 ## Static Runtime Configuration
 
-Both MinGW64 and VS2022 builds use static C runtime by default:
+All builds use static C runtime by default:
 
 - **MinGW64**: Uses `-static-libgcc` to avoid libgcc DLL dependency
-- **VS2022**: Uses `MultiThreaded` runtime (`/MT`) instead of `MultiThreadedDLL` (`/MD`)
+- **VS2022/VS2026**: Uses `MultiThreaded` runtime (`/MT`) instead of `MultiThreadedDLL` (`/MD`)
 
 This produces standalone executables that only require the HydraSDR-specific DLLs:
 - `libhydrasdr.dll` / `hydrasdr.dll` - HydraSDR library
@@ -158,10 +190,10 @@ ctest
 ./tests/resampler-test                  # Resampler tests
 ```
 
-### Visual Studio 2022 (build_vs2022)
+### Visual Studio 2022/2026 (build_vs2022 or build_vs2026)
 
 ```cmd
-cd build_vs2022
+cd build_vs2022   &:: or build_vs2026
 
 :: Run all tests
 ctest -C Release
@@ -190,12 +222,13 @@ tests\Release\resampler-test.exe
 
 ### Performance Comparison
 
-| Test | MinGW64 (GCC 15) | VS2022 (MSVC 19) |
-|------|------------------|------------------|
-| FFT N=8 | 174 MSps | 222 MSps |
-| FFT N=32 | 123 MSps | 150 MSps |
-| Channelizer 4-ch | 31x RT | 34x RT |
-| Channelizer 16-ch | 10x RT | 12x RT |
+| Test | MinGW64 (GCC 15) | VS2022 (MSVC 19.14) | VS2026 (MSVC 19.50) |
+|------|------------------|---------------------|---------------------|
+| FFT N=8 | 26 ns/call | 28 ns/call | 26 ns/call |
+| FFT N=16 | 60 ns/call | 71 ns/call | 62 ns/call |
+| Channelizer 4-ch | 34.7 MSps | 28.4 MSps | 30.6 MSps |
+| Channelizer 8-ch | 42.2 MSps | 31.0 MSps | 33.9 MSps |
+| Channelizer 16-ch | 43.6 MSps | 29.4 MSps | 33.0 MSps |
 
 ## Platform-Specific Dependencies
 
@@ -232,23 +265,29 @@ pacman -S mingw-w64-x86_64-toolchain mingw-w64-x86_64-cmake \
 Ensure `HYDRASDR_DIR` points to the hydrasdr-host directory containing:
 - `libhydrasdr/src/hydrasdr.h` (header)
 - `build_mingw64/libhydrasdr/src/libhydrasdr.dll.a` (MinGW)
-- `build_VS2022/libhydrasdr/src/Release/hydrasdr.lib` (VS2022)
+- `build_VS2022/libhydrasdr/src/Release/hydrasdr.lib` (VS2022/VS2026)
 
 Example: `C:/hydrasdr-host`
 
-### VS2022 Build Links Against MinGW Library
+### VS2022/VS2026 Build Links Against MinGW Library
 
 The FindHydraSDR module automatically selects the correct library based on compiler. If issues persist, clear CMakeCache.txt and reconfigure:
 
 ```cmd
+:: VS2022
 del build_vs2022\CMakeCache.txt
 cmake -B build_vs2022 -G "Visual Studio 17 2022" -A x64 -DENABLE_OPENSSL=OFF ^
+    -DHYDRASDR_DIR=C:/hydrasdr-host
+
+:: VS2026
+del build_vs2026\CMakeCache.txt
+cmake -B build_vs2026 -G "Visual Studio 18 2026" -A x64 -DENABLE_OPENSSL=OFF ^
     -DHYDRASDR_DIR=C:/hydrasdr-host
 ```
 
 ### Missing DLLs at Runtime
 
-Both MinGW64 and VS2022 builds copy DLLs automatically. If DLLs are missing, reconfigure with a clean CMakeCache.txt:
+All builds copy DLLs automatically. If DLLs are missing, reconfigure with a clean CMakeCache.txt:
 
 ```bash
 # MinGW64
@@ -259,6 +298,12 @@ cmake -B build_mingw64 -G Ninja \
 # VS2022
 del build_vs2022\CMakeCache.txt
 cmake -B build_vs2022 -G "Visual Studio 17 2022" -A x64 \
+    -DENABLE_OPENSSL=OFF \
+    -DHYDRASDR_DIR=C:/hydrasdr-host
+
+# VS2026
+del build_vs2026\CMakeCache.txt
+cmake -B build_vs2026 -G "Visual Studio 18 2026" -A x64 \
     -DENABLE_OPENSSL=OFF \
     -DHYDRASDR_DIR=C:/hydrasdr-host
 ```
