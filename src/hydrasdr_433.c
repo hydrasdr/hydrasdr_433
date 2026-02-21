@@ -544,6 +544,11 @@ static int init_wideband_channel_state(struct dm_state *demod, int num_channels,
         goto fail;
     demod->wb_buf_len = wb_buf_len;
 
+    /* Cross-channel deduplication */
+    demod->wb_dedup = wb_dedup_create();
+    if (!demod->wb_dedup)
+        goto fail;
+
     /* Initialize per-channel levels from global defaults */
     for (int i = 0; i < num_channels; i++) {
         demod->wb_min_level_auto[i] = demod->min_level;
@@ -945,6 +950,8 @@ static void free_wideband_channel_state(struct dm_state *demod)
     demod->wb_fm_bufs = NULL;
     free(demod->wb_temp_bufs);
     demod->wb_temp_bufs = NULL;
+    wb_dedup_free(demod->wb_dedup);
+    demod->wb_dedup = NULL;
     demod->wb_buf_len = 0;
     demod->wideband_channels_allocated = 0;
 }

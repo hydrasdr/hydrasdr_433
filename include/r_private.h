@@ -16,6 +16,7 @@
 #include "rtl_433.h"
 #include "compat_time.h"
 #include "cf32_resampler.h"
+#include "wb_dedup.h"
 
 struct dm_state {
     float auto_level;
@@ -83,6 +84,7 @@ struct dm_state {
     int16_t *wb_fm_bufs;                                    ///< Per-channel FM demod buffers [ch * wb_buf_len]
     uint16_t *wb_temp_bufs;                                 ///< Per-channel temp/magnitude buffers [ch * wb_buf_len]
     size_t wb_buf_len;                                      ///< Per-channel buffer length (samples)
+    wb_dedup_t *wb_dedup;                                   ///< Wideband cross-channel deduplication
 };
 
 #endif /* INCLUDE_R_PRIVATE_H_ */

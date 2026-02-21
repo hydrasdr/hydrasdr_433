@@ -28,6 +28,7 @@
 #include "sdr.h"
 #include "data.h"
 #include "data_tag.h"
+#include "wb_dedup.h"
 #include "list.h"
 #include "optparse.h"
 #include "output_file.h"
@@ -875,6 +876,15 @@ void data_acquired_handler(r_device *r_dev, data_t *data)
                 free(d->format);
                 d->format = new_format_label;
             }
+        }
+    }
+
+    /* Wideband cross-channel deduplication */
+    if (cfg->wideband_mode && cfg->demod->wb_dedup) {
+        float chan_freq = cfg->demod->pulse_data.centerfreq_hz;
+        if (wb_dedup_check(cfg->demod->wb_dedup, data, chan_freq)) {
+            data_free(data);
+            return;
         }
     }
 
