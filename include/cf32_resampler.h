@@ -15,6 +15,10 @@
 #include <stdint.h>
 #include <stdlib.h>
 
+/* Resampler filter design parameters */
+#define RESAMPLER_TAPS_PER_BRANCH  32     /* Taps per polyphase branch */
+#define RESAMPLER_STOPBAND_DB      60.0f  /* Kaiser stopband attenuation (dB) */
+
 /* Float32 polyphase resampler for IQ data */
 typedef struct {
     int up_factor;          /* Interpolation factor L */

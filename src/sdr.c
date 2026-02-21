@@ -1167,6 +1167,11 @@ static int sdr_apply_settings_hydrasdr(sdr_dev_t *dev, char const *sdr_settings,
     return r;
 }
 
+/* Buffer is stored in hctx->buffer and freed by sdr_close_hydrasdr(). */
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wanalyzer-malloc-leak"
+#endif
 static int sdr_start_hydrasdr(sdr_dev_t *dev, sdr_event_cb_t cb, void *ctx, uint32_t buf_num, uint32_t buf_len)
 {
     if (!dev || !dev->hydrasdr_ctx)
@@ -1206,6 +1211,9 @@ static int sdr_start_hydrasdr(sdr_dev_t *dev, sdr_event_cb_t cb, void *ctx, uint
 
     return 0;
 }
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
 
 static int sdr_stop_hydrasdr(sdr_dev_t *dev)
 {

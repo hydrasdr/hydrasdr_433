@@ -398,7 +398,7 @@ if(MSVC)
     target_sources(hydrasdr_433 PRIVATE getopt/getopt.c)
 endif()
 
-add_library(data data.c abuf.c)
+add_library(data STATIC data.c abuf.c)
 target_link_libraries(data ${NET_LIBRARIES})
 
 target_link_libraries(hydrasdr_433

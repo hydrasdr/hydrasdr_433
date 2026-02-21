@@ -579,9 +579,9 @@ static float verify_fft_kernel(int N,
 			       void (*kernel)(const float *, const float *,
 					      float *, float *))
 {
-	float in_re[16], in_im[16];
-	float out_re[16], out_im[16];
-	float ref_re[16], ref_im[16];
+	float in_re[16] = {0}, in_im[16] = {0};
+	float out_re[16] = {0}, out_im[16] = {0};
+	float ref_re[16] = {0}, ref_im[16] = {0};
 	float max_err = 0.0f;
 
 	/* Deterministic pseudo-random input */
@@ -619,7 +619,8 @@ static void run_kernel_verification(void)
 	struct {
 		int n;
 		const char *name;
-		void (*kernel)(const float *, const float *, float *, float *);
+		void (*kernel)(const float *OPT_RESTRICT, const float *OPT_RESTRICT,
+			       float *OPT_RESTRICT, float *OPT_RESTRICT);
 	} kernels[] = {
 		{2,  "fft2_forward_soa",  fft2_forward_soa},
 		{4,  "fft4_forward_soa",  fft4_forward_soa},
@@ -647,7 +648,8 @@ static void run_kernel_benchmark(void)
 	struct {
 		int n;
 		const char *name;
-		void (*kernel)(const float *, const float *, float *, float *);
+		void (*kernel)(const float *OPT_RESTRICT, const float *OPT_RESTRICT,
+			       float *OPT_RESTRICT, float *OPT_RESTRICT);
 	} kernels[] = {
 		{2,  "fft2  specialized",  fft2_forward_soa},
 		{4,  "fft4  specialized",  fft4_forward_soa},
@@ -662,8 +664,8 @@ static void run_kernel_benchmark(void)
 
 	for (int ki = 0; ki < n_kernels; ki++) {
 		int N = kernels[ki].n;
-		float in_re[16], in_im[16];
-		float out_re[16], out_im[16];
+		float in_re[16] = {0}, in_im[16] = {0};
+		float out_re[16] = {0}, out_im[16] = {0};
 		double t0, t_spec, t_lib;
 		int iters = 2000000;
 

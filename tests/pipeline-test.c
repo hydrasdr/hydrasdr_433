@@ -7,13 +7,18 @@
     the resampler's anti-aliasing filter killed signals that the PFB
     channelizer passed cleanly.
 
-    Real-world scenario that failed:
+    Real-world scenario that failed (with original 8-tap Blackman filter):
       -B 433.8M:2M:8  (8 channels @ 2.5 MSps, spacing=312.5 kHz)
       Signal at 433.92 MHz -> +120 kHz from Ch0 center (433.8 MHz)
       PFB passband: +/-140 kHz (90% of +/-156.25 kHz) -> signal passes
       Resampler 312.5k->250k: -5.2 dB at 120 kHz -> signal killed
 
     Fix: bypass resampler (target_rate = channel_rate), tested here.
+
+    The resampler now uses a 32-tap Kaiser window (60 dB stopband) which
+    greatly improves passband flatness and transition bandwidth.  However,
+    +120 kHz at 250k output rate is 96% of Nyquist, so inherent rolloff
+    from the rate conversion still causes significant attenuation there.
 
     Copyright (C) 2025-2026 Benjamin Vernoux <bvernoux@hydrasdr.com>
 
@@ -294,8 +299,8 @@ static int test_pipeline_with_resampler(void)
 	} test_signals[] = {
 		{  0.0f,   1.0f,  "DC (channel center)"                  },
 		{ 20.0f,   1.0f,  "+20 kHz (433.92 MHz)"                 },
-		{ 50.0f,   2.0f,  "+50 kHz (typical OOK)"                },
-		{100.0f,   6.0f,  "+100 kHz (approaching Nyquist)"       },
+		{ 50.0f,   1.0f,  "+50 kHz (typical OOK)"                },
+		{100.0f,   3.0f,  "+100 kHz (approaching Nyquist)"       },
 		{120.0f,  99.0f,  "+120 kHz (original failing freq)"     },
 	};
 	int num_signals = sizeof(test_signals) / sizeof(test_signals[0]);

@@ -14,10 +14,26 @@
 #include <math.h>
 #include <limits.h>
 
-/* Blackman window coefficients */
-#define BLACKMAN_A0 0.42f
-#define BLACKMAN_A1 0.50f
-#define BLACKMAN_A2 0.08f
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
+
+/* Modified Bessel function of the first kind, order 0.
+ * Series approximation: I0(x) = sum_{k=0}^inf ((x/2)^k / k!)^2 */
+static float bessel_i0(float x)
+{
+    float sum = 1.0f;
+    float term = 1.0f;
+    float x2 = x * x * 0.25f;
+
+    for (int k = 1; k < 32; k++) {
+        term *= x2 / (float)(k * k);
+        sum += term;
+        if (term < sum * 1e-10f)
+            break;
+    }
+    return sum;
+}
 
 int cf32_resampler_gcd(int a, int b)
 {
@@ -34,10 +50,24 @@ void cf32_resampler_design_filter(float *coeffs, int num_taps, int factor)
     float cutoff = 1.0f / (float)factor;
     float center = (float)(num_taps - 1) / 2.0f;
     float sum = 0.0f;
+    float As = RESAMPLER_STOPBAND_DB;
+    float beta, I0_beta;
+
+    /* Compute Kaiser beta from stopband attenuation */
+    if (As > 50.0f) {
+        beta = 0.1102f * (As - 8.7f);
+    } else if (As > 21.0f) {
+        beta = 0.5842f * powf(As - 21.0f, 0.4f)
+               + 0.07886f * (As - 21.0f);
+    } else {
+        beta = 0.0f;
+    }
+
+    I0_beta = bessel_i0(beta);
 
     for (int i = 0; i < num_taps; i++) {
         float n = (float)i - center;
-        float sinc, window;
+        float sinc, window, t;
 
         /* Sinc function */
         if (fabsf(n) < 1e-6f)
@@ -47,9 +77,11 @@ void cf32_resampler_design_filter(float *coeffs, int num_taps, int factor)
             sinc = sinf(x) / ((float)M_PI * n);
         }
 
-        /* Blackman window */
-        float phase = 2.0f * (float)M_PI * (float)i / (float)(num_taps - 1);
-        window = BLACKMAN_A0 - BLACKMAN_A1 * cosf(phase) + BLACKMAN_A2 * cosf(2.0f * phase);
+        /* Kaiser window */
+        t = (float)i / (float)(num_taps - 1);
+        t = 2.0f * t - 1.0f;  /* Map to [-1, 1] */
+        t = sqrtf(1.0f - t * t);
+        window = bessel_i0(beta * t) / I0_beta;
 
         coeffs[i] = sinc * window;
         sum += coeffs[i];
@@ -83,8 +115,8 @@ int cf32_resampler_init(cf32_resampler_t *res, uint32_t input_rate, uint32_t out
     res->up_factor = (int)output_rate / g;
     res->down_factor = (int)input_rate / g;
 
-    /* Filter design: 8 taps per polyphase branch provides good quality */
-    res->taps_per_branch = 8;
+    /* Filter design: 32 taps per polyphase branch (Kaiser window) */
+    res->taps_per_branch = RESAMPLER_TAPS_PER_BRANCH;
 
     /* Check for integer overflow before multiplication */
     if (res->up_factor > INT_MAX / res->taps_per_branch)

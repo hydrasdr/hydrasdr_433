@@ -26,6 +26,10 @@
 #include <sys/time.h>
 #endif
 
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
+
 /* Include the actual resampler implementation from the shared header */
 #include "cf32_resampler.h"
 #include "build_info.h"
@@ -41,8 +45,7 @@
 #define TEST_RATE_AUDIO_IN      48000    /* Audio input rate */
 #define TEST_RATE_AUDIO_OUT     44100    /* Audio output rate */
 
-/* Resampler design parameters */
-#define RESAMPLER_TAPS_PER_BRANCH  8     /* Taps per polyphase branch */
+/* Resampler design parameters (must match cf32_resampler.h) */
 #define RESAMPLER_CUTOFF_FACTOR    1.0f  /* Cutoff = 1.0/factor */
 
 /* Test tolerances */
@@ -110,7 +113,7 @@ static void test_filter_dc_gain(void)
 
     for (int t = 0; t < num_tests; t++) {
         int factor = test_factors[t];
-        int num_taps = 8 * factor;  /* 8 taps per branch */
+        int num_taps = RESAMPLER_TAPS_PER_BRANCH * factor;
 
         float *coeffs = (float *)malloc((size_t)num_taps * sizeof(float));
         if (!coeffs) {
@@ -141,7 +144,7 @@ static void test_filter_symmetry(void)
     printf("\n=== Filter Symmetry Tests ===\n");
 
     int factor = 5;
-    int num_taps = 8 * factor;  /* 40 taps */
+    int num_taps = RESAMPLER_TAPS_PER_BRANCH * factor;
 
     float *coeffs = (float *)malloc((size_t)num_taps * sizeof(float));
     if (!coeffs) {
@@ -170,9 +173,9 @@ static void test_filter_frequency_response(void)
 {
     printf("\n=== Filter Frequency Response Tests ===\n");
 
-    int factor = 5;  /* Typical: cutoff at 1.0/5 = 0.20 normalized */
+    int factor = 5;  /* Typical: sinc param 1.0/5 = 0.20, actual cutoff 0.10 */
     int num_taps = RESAMPLER_TAPS_PER_BRANCH * factor;
-    float cutoff_norm = RESAMPLER_CUTOFF_FACTOR / (float)factor;  /* 0.18 */
+    float cutoff_norm = RESAMPLER_CUTOFF_FACTOR / (float)factor / 2.0f;  /* 0.10 */
 
     float *coeffs = (float *)malloc((size_t)num_taps * sizeof(float));
     if (!coeffs) {
@@ -203,26 +206,38 @@ static void test_filter_frequency_response(void)
     printf("INFO: Actual -3dB cutoff frequency: %.4f (design cutoff: %.3f)\n", f_3db, cutoff_norm);
     TEST_ASSERT(f_3db > 0.0, "Filter has finite bandwidth");
 
+    /* With 32-tap Kaiser, -3dB should be close to design cutoff */
+    char cutoff_msg[128];
+    snprintf(cutoff_msg, sizeof(cutoff_msg),
+             "-3dB cutoff (%.4f) near design cutoff (%.3f)", f_3db, cutoff_norm);
+    TEST_ASSERT(f_3db > cutoff_norm * 0.8 && f_3db < cutoff_norm * 1.3, cutoff_msg);
+
     /* Test stopband: should be well attenuated after cutoff */
     double stopband_response = compute_freq_response(coeffs, num_taps, 0.3);
-    TEST_ASSERT(stopband_response < 0.1, "Stopband at f=0.3 is attenuated (< -20dB)");
+    TEST_ASSERT(stopband_response < 0.01, "Stopband at f=0.3 is attenuated (< -40dB)");
 
     /* Test at Nyquist (f=0.5): should be heavily attenuated */
     double nyquist_response = compute_freq_response(coeffs, num_taps, 0.5);
-    TEST_ASSERT(nyquist_response < 0.01, "Nyquist response heavily attenuated (< -40dB)");
+    TEST_ASSERT(nyquist_response < 0.001, "Nyquist response heavily attenuated (< -60dB)");
 
     free(coeffs);
 }
 
-static void test_blackman_window(void)
+static void test_kaiser_window(void)
 {
-    printf("\n=== Blackman Window Tests ===\n");
+    printf("\n=== Kaiser Window Tests ===\n");
 
-    const float a0 = 0.42f;
-    const float a1 = 0.50f;
-    const float a2 = 0.08f;
+    /* Compute Kaiser beta for the configured stopband attenuation */
+    float As = RESAMPLER_STOPBAND_DB;
+    float beta;
+    if (As > 50.0f)
+        beta = 0.1102f * (As - 8.7f);
+    else if (As > 21.0f)
+        beta = 0.5842f * powf(As - 21.0f, 0.4f) + 0.07886f * (As - 21.0f);
+    else
+        beta = 0.0f;
 
-    int num_taps = 40;
+    int num_taps = 160;  /* 32 taps * factor 5 */
     float *window = (float *)malloc((size_t)num_taps * sizeof(float));
     if (!window) {
         printf("FAIL: Failed to allocate window\n");
@@ -230,22 +245,51 @@ static void test_blackman_window(void)
         return;
     }
 
-    for (int i = 0; i < num_taps; i++) {
-        float phase = 2.0f * (float)M_PI * (float)i / (float)(num_taps - 1);
-        window[i] = a0 - a1 * cosf(phase) + a2 * cosf(2.0f * phase);
+    /* Compute raw Kaiser window (same formula as cf32_resampler.c) */
+    float I0_beta = 1.0f;
+    {
+        float sum = 1.0f, term = 1.0f, x2 = beta * beta * 0.25f;
+        for (int k = 1; k < 32; k++) {
+            term *= x2 / (float)(k * k);
+            sum += term;
+            if (term < sum * 1e-10f)
+                break;
+        }
+        I0_beta = sum;
     }
 
-    TEST_ASSERT_NEAR(window[0], 0.0, 0.001, "Blackman window start = 0.0");
-    TEST_ASSERT_NEAR(window[num_taps - 1], 0.0, 0.001, "Blackman window end = 0.0");
-    TEST_ASSERT_NEAR(window[num_taps / 2], 1.0, 0.01, "Blackman window center = 1.0");
+    for (int i = 0; i < num_taps; i++) {
+        float t = (float)i / (float)(num_taps - 1);
+        t = 2.0f * t - 1.0f;
+        t = sqrtf(1.0f - t * t);
+        window[i] = 1.0f;  /* bessel_i0(beta * t) / I0_beta placeholder */
+        /* Recompute I0(beta*t) inline */
+        float bt = beta * t;
+        float s = 1.0f, tm = 1.0f, x2 = bt * bt * 0.25f;
+        for (int k = 1; k < 32; k++) {
+            tm *= x2 / (float)(k * k);
+            s += tm;
+            if (tm < s * 1e-10f)
+                break;
+        }
+        window[i] = s / I0_beta;
+    }
 
+    /* Kaiser endpoints should be near zero (I0(0)/I0(beta) ~ 1/I0(beta)) */
+    TEST_ASSERT(window[0] < 0.05, "Kaiser window start near zero");
+    TEST_ASSERT(window[num_taps - 1] < 0.05, "Kaiser window end near zero");
+
+    /* Kaiser center should be 1.0 (I0(beta)/I0(beta) = 1) */
+    TEST_ASSERT_NEAR(window[num_taps / 2], 1.0, 0.01, "Kaiser window center = 1.0");
+
+    /* Kaiser window should be symmetric */
     double max_asymmetry = 0.0;
     for (int i = 0; i < num_taps / 2; i++) {
         double diff = fabs(window[i] - window[num_taps - 1 - i]);
         if (diff > max_asymmetry)
             max_asymmetry = diff;
     }
-    TEST_ASSERT_NEAR(max_asymmetry, 0.0, 1e-6, "Blackman window is symmetric");
+    TEST_ASSERT_NEAR(max_asymmetry, 0.0, 1e-6, "Kaiser window is symmetric");
 
     free(window);
 }
@@ -277,18 +321,19 @@ static void test_stopband_attenuation(void)
         int factor;
         double min_attenuation_db;
     } test_cases[] = {
-        {2, 30.0},
-        {4, 40.0},
-        {5, 45.0},
-        {8, 50.0},
+        {2, 55.0},
+        {4, 55.0},
+        {5, 55.0},
+        {8, 55.0},
     };
 
     int num_cases = (int)(sizeof(test_cases) / sizeof(test_cases[0]));
 
     for (int t = 0; t < num_cases; t++) {
         int factor = test_cases[t].factor;
-        int num_taps = 8 * factor;
-        float cutoff_norm = RESAMPLER_CUTOFF_FACTOR / (float)factor;
+        int num_taps = RESAMPLER_TAPS_PER_BRANCH * factor;
+        /* Actual filter cutoff: sinc param is 1/factor, giving fc = 0.5/factor */
+        double actual_cutoff = 0.5 / (double)factor;
 
         float *coeffs = (float *)malloc((size_t)num_taps * sizeof(float));
         if (!coeffs) {
@@ -299,20 +344,25 @@ static void test_stopband_attenuation(void)
 
         cf32_resampler_design_filter(coeffs, num_taps, factor);
 
-        /* Find maximum stopband response (from 2*cutoff to Nyquist) */
+        /* Find maximum stopband response (scan from 1.5x cutoff to Nyquist).
+         * Starting at 1.5x cutoff ensures we're past the transition band.
+         * Use fine step (0.001) to catch narrow sidelobe peaks. */
         double max_stopband = 0.0;
-        for (double f = cutoff_norm * 2.0; f <= 0.5; f += 0.01) {
+        double peak_freq = 0.0;
+        for (double f = actual_cutoff * 1.5; f <= 0.5; f += 0.001) {
             double response = compute_freq_response(coeffs, num_taps, f);
-            if (response > max_stopband)
+            if (response > max_stopband) {
                 max_stopband = response;
+                peak_freq = f;
+            }
         }
 
         /* Convert to dB */
         double attenuation_db = -20.0 * log10(max_stopband + 1e-10);
 
         char msg[128];
-        snprintf(msg, sizeof(msg), "Factor %d: stopband attenuation >= %.0f dB (got %.1f dB)",
-                 factor, test_cases[t].min_attenuation_db, attenuation_db);
+        snprintf(msg, sizeof(msg), "Factor %d: stopband >= %.0f dB (got %.1f dB, peak at f=%.4f)",
+                 factor, test_cases[t].min_attenuation_db, attenuation_db, peak_freq);
         TEST_ASSERT(attenuation_db >= test_cases[t].min_attenuation_db, msg);
 
         free(coeffs);
@@ -339,7 +389,7 @@ static void test_passband_characteristics(void)
     /* Measure passband response variation in useful frequency range
        For SDR resampling, we care about signals up to ~100kHz at 250kHz rate */
     double min_passband = 1.0, max_passband = 0.0;
-    double test_end = 0.05;  /* Up to 5% of Nyquist */
+    double test_end = 0.08;  /* Up to 40% of cutoff (0.08 / 0.2) */
     for (double f = 0.0; f <= test_end; f += 0.001) {
         double response = compute_freq_response(coeffs, num_taps, f);
         if (response < min_passband) min_passband = response;
@@ -348,8 +398,8 @@ static void test_passband_characteristics(void)
 
     double ripple_db = 20.0 * log10(max_passband / (min_passband + 1e-10));
 
-    /* For narrow passband near DC, ripple should be low */
-    TEST_ASSERT(ripple_db < 1.0, "Narrow passband ripple < 1 dB");
+    /* With 32-tap Kaiser, passband ripple should be very low */
+    TEST_ASSERT(ripple_db < 0.1, "Passband ripple < 0.1 dB (Kaiser 32-tap)");
 
     printf("INFO: Passband (DC to %.3f) ripple = %.3f dB\n", test_end, ripple_db);
     printf("INFO: Passband min=%.4f, max=%.4f\n", min_passband, max_passband);
@@ -970,10 +1020,10 @@ static void test_overflow_large_factors(void)
      * But finding the right pair is tricky. Instead, test with known
      * values that trigger the check. */
 
-    /* A rate pair where L would be large enough that L * 8 overflows int:
-     * Need up_factor > INT_MAX / 8 = ~268M.
+    /* A rate pair where L would be large enough that L * 32 overflows int:
+     * Need up_factor > INT_MAX / 32 = ~67M.
      * Use output_rate = 300000007 (prime), input_rate = 300000017 (prime).
-     * GCD = 1, so up_factor = 300000007, and 300000007 * 8 overflows int. */
+     * GCD = 1, so up_factor = 300000007, and 300000007 * 32 overflows int. */
     ret = cf32_resampler_init(&res, 300000017, 300000007, 100);
     TEST_ASSERT(ret == -1, "Reject coprime rates with up_factor * taps_per_branch overflow");
 }
@@ -1187,7 +1237,7 @@ int main(int argc, char *argv[])
     test_filter_dc_gain();
     test_filter_symmetry();
     test_filter_frequency_response();
-    test_blackman_window();
+    test_kaiser_window();
     test_sinc_function();
     test_stopband_attenuation();
     test_passband_characteristics();

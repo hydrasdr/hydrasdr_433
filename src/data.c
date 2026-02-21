@@ -152,8 +152,10 @@ alloc_error:
 }
 
 // the static analyzer can't prove the allocs to be correct
+#if defined(__GNUC__) && !defined(__clang__)
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wanalyzer-malloc-leak"
+#endif
 
 static data_t *vdata_make(data_t *first, const char *key, const char *pretty_key, va_list ap)
 {
@@ -387,7 +389,9 @@ R_API void data_free(data_t *data)
     }
 }
 
+#if defined(__GNUC__) && !defined(__clang__)
 #pragma GCC diagnostic pop
+#endif
 
 /* data output */
 

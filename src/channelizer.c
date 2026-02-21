@@ -282,16 +282,24 @@ int channelizer_init(channelizer_t *ch, int num_channels,
 
     size_t win_buf_size = (size_t)M * (size_t)window_alloc * sizeof(float);
     ch->window_re = (float *)opt_aligned_alloc(win_buf_size, 64);
+    if (!ch->window_re) {
+        channelizer_free(ch);
+        return -1;
+    }
     ch->window_im = (float *)opt_aligned_alloc(win_buf_size, 64);
-    if (!ch->window_re || !ch->window_im) {
+    if (!ch->window_im) {
         channelizer_free(ch);
         return -1;
     }
     memset(ch->window_re, 0, win_buf_size);
     memset(ch->window_im, 0, win_buf_size);
     ch->window_re_ptrs = (float **)malloc((size_t)M * sizeof(float *));
+    if (!ch->window_re_ptrs) {
+        channelizer_free(ch);
+        return -1;
+    }
     ch->window_im_ptrs = (float **)malloc((size_t)M * sizeof(float *));
-    if (!ch->window_re_ptrs || !ch->window_im_ptrs) {
+    if (!ch->window_im_ptrs) {
         channelizer_free(ch);
         return -1;
     }
@@ -316,11 +324,22 @@ int channelizer_init(channelizer_t *ch, int num_channels,
     /* Allocate FFT work buffers (SoA split format, 64-byte aligned) */
     size_t fft_buf_size = (size_t)M * sizeof(float);
     ch->fft_in_re = (float *)opt_aligned_alloc(fft_buf_size, 64);
+    if (!ch->fft_in_re) {
+        channelizer_free(ch);
+        return -1;
+    }
     ch->fft_in_im = (float *)opt_aligned_alloc(fft_buf_size, 64);
+    if (!ch->fft_in_im) {
+        channelizer_free(ch);
+        return -1;
+    }
     ch->fft_out_re = (float *)opt_aligned_alloc(fft_buf_size, 64);
+    if (!ch->fft_out_re) {
+        channelizer_free(ch);
+        return -1;
+    }
     ch->fft_out_im = (float *)opt_aligned_alloc(fft_buf_size, 64);
-    if (!ch->fft_in_re || !ch->fft_in_im ||
-        !ch->fft_out_re || !ch->fft_out_im) {
+    if (!ch->fft_out_im) {
         channelizer_free(ch);
         return -1;
     }

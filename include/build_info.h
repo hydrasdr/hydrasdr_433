@@ -74,7 +74,7 @@
 
 /** Complete build info string (build type + compiler + SIMD + math flags) */
 #define BUILD_INFO_STR \
-	BUILD_TYPE_STR " " BUILD_COMPILER_STR \
-	BUILD_SIMD_STR BUILD_FMA_STR BUILD_FMATH_STR
+    BUILD_TYPE_STR " " BUILD_COMPILER_STR \
+    BUILD_SIMD_STR BUILD_FMA_STR BUILD_FMATH_STR
 
 #endif /* INCLUDE_BUILD_INFO_H_ */
