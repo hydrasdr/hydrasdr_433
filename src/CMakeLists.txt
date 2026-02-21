@@ -12,6 +12,11 @@ add_library(r_433 STATIC
     bitbuffer.c
     cf32_resampler.c
     channelizer.c
+    channelizer_sse2.c
+    channelizer_avx2.c
+    channelizer_avx512.c
+    channelizer_neon.c
+    channelizer_sve.c
     compat_paths.c
     compat_time.c
     confparse.c
@@ -307,9 +312,68 @@ if("${CMAKE_C_COMPILER_ID}" STREQUAL "GNU" OR "${CMAKE_C_COMPILER_ID}" MATCHES "
     set_source_files_properties(mongoose.c PROPERTIES COMPILE_FLAGS "-w")
 endif()
 
-# Apply native DSP optimizations to hot-path files
+# ISA-specific flags for channelizer hot-path variants
+# Runtime dispatch selects the best variant for the detected CPU ISA.
+if(ENABLE_NATIVE_OPTIMIZATIONS)
+    # All variants use native ISA (fastest, not portable)
+    set_source_files_properties(channelizer_sse2.c channelizer_avx2.c channelizer_avx512.c
+        channelizer_neon.c channelizer_sve.c
+        PROPERTIES COMPILE_FLAGS "${DSP_OPTIMIZE_FLAGS}")
+elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64|i[3-6]86")
+    # x86: Runtime dispatch — each variant compiled for its target ISA
+    if("${CMAKE_C_COMPILER_ID}" STREQUAL "GNU" OR "${CMAKE_C_COMPILER_ID}" MATCHES "Clang")
+        set_source_files_properties(channelizer_sse2.c
+            PROPERTIES COMPILE_FLAGS "-ffast-math")
+        set_source_files_properties(channelizer_avx2.c
+            PROPERTIES COMPILE_FLAGS "-mavx2 -mfma -ffast-math")
+        set_source_files_properties(channelizer_avx512.c
+            PROPERTIES COMPILE_FLAGS "-mavx512f -mavx512vl -mfma -ffast-math")
+        # ARM variant files: compile as baseline (linked but never called on x86)
+        set_source_files_properties(channelizer_neon.c channelizer_sve.c
+            PROPERTIES COMPILE_FLAGS "-ffast-math")
+    elseif(MSVC)
+        set_source_files_properties(channelizer_sse2.c
+            PROPERTIES COMPILE_FLAGS "/fp:fast")
+        set_source_files_properties(channelizer_avx2.c
+            PROPERTIES COMPILE_FLAGS "/arch:AVX2 /fp:fast")
+        set_source_files_properties(channelizer_avx512.c
+            PROPERTIES COMPILE_FLAGS "/arch:AVX512 /fp:fast")
+        # ARM variant files: compile as baseline (linked but never called on x86)
+        set_source_files_properties(channelizer_neon.c channelizer_sve.c
+            PROPERTIES COMPILE_FLAGS "/fp:fast")
+    endif()
+elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64|ARM64")
+    # ARM AArch64: NEON is mandatory, SVE is optional
+    if("${CMAKE_C_COMPILER_ID}" STREQUAL "GNU" OR "${CMAKE_C_COMPILER_ID}" MATCHES "Clang")
+        # NEON variant: -ffast-math only (NEON auto-vectorized by default on AArch64)
+        set_source_files_properties(channelizer_neon.c
+            PROPERTIES COMPILE_FLAGS "-ffast-math")
+        # SVE variant: explicit SVE enable for scalable vector auto-vectorization
+        # Apple Clang does not support -march=armv8-a+sve (no SVE on Apple Silicon)
+        if(NOT APPLE)
+            set_source_files_properties(channelizer_sve.c
+                PROPERTIES COMPILE_FLAGS "-march=armv8-a+sve -ffast-math")
+        else()
+            set_source_files_properties(channelizer_sve.c
+                PROPERTIES COMPILE_FLAGS "-ffast-math")
+        endif()
+        # x86 variant files: compile as baseline (linked but never called on ARM)
+        set_source_files_properties(channelizer_sse2.c channelizer_avx2.c channelizer_avx512.c
+            PROPERTIES COMPILE_FLAGS "-ffast-math")
+    endif()
+else()
+    # Non-x86, non-ARM (RISC-V, etc.): all variants get baseline fast-math only
+    if("${CMAKE_C_COMPILER_ID}" STREQUAL "GNU" OR "${CMAKE_C_COMPILER_ID}" MATCHES "Clang")
+        set_source_files_properties(channelizer_sse2.c channelizer_avx2.c channelizer_avx512.c
+            channelizer_neon.c channelizer_sve.c
+            PROPERTIES COMPILE_FLAGS "-ffast-math")
+    endif()
+endif()
+# channelizer.c itself: NO -ffast-math (init code has float comparisons)
+
+# cf32_resampler.c: keep DSP optimization flags when native optimizations enabled
 if(DSP_OPTIMIZE_FLAGS)
-    set_source_files_properties(channelizer.c cf32_resampler.c
+    set_source_files_properties(cf32_resampler.c
         PROPERTIES COMPILE_FLAGS "${DSP_OPTIMIZE_FLAGS}")
 endif()
 

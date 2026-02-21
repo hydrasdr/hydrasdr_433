@@ -47,9 +47,12 @@ endif()
 
 add_test(resampler-test resampler-test)
 
-add_executable(channelizer-test channelizer-test.c ../src/channelizer.c)
+add_executable(channelizer-test channelizer-test.c ../src/channelizer.c
+    ../src/channelizer_sse2.c ../src/channelizer_avx2.c ../src/channelizer_avx512.c
+    ../src/channelizer_neon.c ../src/channelizer_sve.c)
 target_include_directories(channelizer-test PRIVATE
     ${PROJECT_SOURCE_DIR}/include
+    ${PROJECT_SOURCE_DIR}/src
     ${PROJECT_SOURCE_DIR}/external/hydrasdr-lfft)
 target_link_libraries(channelizer-test hydrasdr_lfft)
 
@@ -59,9 +62,12 @@ endif()
 
 add_test(channelizer-test channelizer-test)
 
-add_executable(channelizer-functional-test channelizer-functional-test.c ../src/channelizer.c)
+add_executable(channelizer-functional-test channelizer-functional-test.c ../src/channelizer.c
+    ../src/channelizer_sse2.c ../src/channelizer_avx2.c ../src/channelizer_avx512.c
+    ../src/channelizer_neon.c ../src/channelizer_sve.c)
 target_include_directories(channelizer-functional-test PRIVATE
     ${PROJECT_SOURCE_DIR}/include
+    ${PROJECT_SOURCE_DIR}/src
     ${PROJECT_SOURCE_DIR}/external/hydrasdr-lfft)
 target_link_libraries(channelizer-functional-test hydrasdr_lfft)
 
@@ -71,9 +77,12 @@ endif()
 
 add_test(channelizer-functional-test channelizer-functional-test)
 
-add_executable(channelizer-bench channelizer-bench.c ../src/channelizer.c)
+add_executable(channelizer-bench channelizer-bench.c ../src/channelizer.c
+    ../src/channelizer_sse2.c ../src/channelizer_avx2.c ../src/channelizer_avx512.c
+    ../src/channelizer_neon.c ../src/channelizer_sve.c)
 target_include_directories(channelizer-bench PRIVATE
     ${PROJECT_SOURCE_DIR}/include
+    ${PROJECT_SOURCE_DIR}/src
     ${PROJECT_SOURCE_DIR}/external/hydrasdr-lfft)
 target_link_libraries(channelizer-bench hydrasdr_lfft)
 
@@ -83,9 +92,12 @@ endif()
 
 add_test(channelizer-bench channelizer-bench)
 
-add_executable(channelizer-filter-char channelizer-filter-char.c ../src/channelizer.c)
+add_executable(channelizer-filter-char channelizer-filter-char.c ../src/channelizer.c
+    ../src/channelizer_sse2.c ../src/channelizer_avx2.c ../src/channelizer_avx512.c
+    ../src/channelizer_neon.c ../src/channelizer_sve.c)
 target_include_directories(channelizer-filter-char PRIVATE
     ${PROJECT_SOURCE_DIR}/include
+    ${PROJECT_SOURCE_DIR}/src
     ${PROJECT_SOURCE_DIR}/external/hydrasdr-lfft)
 target_link_libraries(channelizer-filter-char hydrasdr_lfft)
 
@@ -93,9 +105,12 @@ if(UNIX)
 target_link_libraries(channelizer-filter-char m)
 endif()
 
-add_executable(pipeline-test pipeline-test.c ../src/channelizer.c ../src/cf32_resampler.c)
+add_executable(pipeline-test pipeline-test.c ../src/channelizer.c ../src/cf32_resampler.c
+    ../src/channelizer_sse2.c ../src/channelizer_avx2.c ../src/channelizer_avx512.c
+    ../src/channelizer_neon.c ../src/channelizer_sve.c)
 target_include_directories(pipeline-test PRIVATE
     ${PROJECT_SOURCE_DIR}/include
+    ${PROJECT_SOURCE_DIR}/src
     ${PROJECT_SOURCE_DIR}/external/hydrasdr-lfft)
 target_link_libraries(pipeline-test hydrasdr_lfft)
 
@@ -105,9 +120,12 @@ endif()
 
 add_test(pipeline-test pipeline-test)
 
-add_executable(channelizer-os-test channelizer-os-test.c ../src/channelizer.c)
+add_executable(channelizer-os-test channelizer-os-test.c ../src/channelizer.c
+    ../src/channelizer_sse2.c ../src/channelizer_avx2.c ../src/channelizer_avx512.c
+    ../src/channelizer_neon.c ../src/channelizer_sve.c)
 target_include_directories(channelizer-os-test PRIVATE
     ${PROJECT_SOURCE_DIR}/include
+    ${PROJECT_SOURCE_DIR}/src
     ${PROJECT_SOURCE_DIR}/external/hydrasdr-lfft)
 target_link_libraries(channelizer-os-test hydrasdr_lfft)
 
@@ -117,9 +135,12 @@ endif()
 
 add_test(channelizer-os-test channelizer-os-test)
 
-add_executable(channelizer-profile channelizer-profile.c ../src/channelizer.c)
+add_executable(channelizer-profile channelizer-profile.c ../src/channelizer.c
+    ../src/channelizer_sse2.c ../src/channelizer_avx2.c ../src/channelizer_avx512.c
+    ../src/channelizer_neon.c ../src/channelizer_sve.c)
 target_include_directories(channelizer-profile PRIVATE
     ${PROJECT_SOURCE_DIR}/include
+    ${PROJECT_SOURCE_DIR}/src
     ${PROJECT_SOURCE_DIR}/external/hydrasdr-lfft)
 target_link_libraries(channelizer-profile hydrasdr_lfft)
 
@@ -127,9 +148,64 @@ if(UNIX)
 target_link_libraries(channelizer-profile m)
 endif()
 
-# Apply DSP optimization flags to hot-path sources compiled in test targets
+# ISA-specific flags for channelizer hot-path variants (test scope)
+if(ENABLE_NATIVE_OPTIMIZATIONS)
+    set_source_files_properties(../src/channelizer_sse2.c ../src/channelizer_avx2.c ../src/channelizer_avx512.c
+        ../src/channelizer_neon.c ../src/channelizer_sve.c
+        channelizer-profile.c
+        PROPERTIES COMPILE_FLAGS "${DSP_OPTIMIZE_FLAGS}")
+elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64|i[3-6]86")
+    if("${CMAKE_C_COMPILER_ID}" STREQUAL "GNU" OR "${CMAKE_C_COMPILER_ID}" MATCHES "Clang")
+        set_source_files_properties(../src/channelizer_sse2.c
+            PROPERTIES COMPILE_FLAGS "-ffast-math")
+        set_source_files_properties(../src/channelizer_avx2.c
+            PROPERTIES COMPILE_FLAGS "-mavx2 -mfma -ffast-math")
+        set_source_files_properties(../src/channelizer_avx512.c
+            PROPERTIES COMPILE_FLAGS "-mavx512f -mavx512vl -mfma -ffast-math")
+        # ARM variant files: compile as baseline (linked but never called on x86)
+        set_source_files_properties(../src/channelizer_neon.c ../src/channelizer_sve.c
+            PROPERTIES COMPILE_FLAGS "-ffast-math")
+    elseif(MSVC)
+        set_source_files_properties(../src/channelizer_sse2.c
+            PROPERTIES COMPILE_FLAGS "/fp:fast")
+        set_source_files_properties(../src/channelizer_avx2.c
+            PROPERTIES COMPILE_FLAGS "/arch:AVX2 /fp:fast")
+        set_source_files_properties(../src/channelizer_avx512.c
+            PROPERTIES COMPILE_FLAGS "/arch:AVX512 /fp:fast")
+        # ARM variant files: compile as baseline (linked but never called on x86)
+        set_source_files_properties(../src/channelizer_neon.c ../src/channelizer_sve.c
+            PROPERTIES COMPILE_FLAGS "/fp:fast")
+    endif()
+elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64|ARM64")
+    # ARM AArch64: NEON is mandatory, SVE is optional
+    if("${CMAKE_C_COMPILER_ID}" STREQUAL "GNU" OR "${CMAKE_C_COMPILER_ID}" MATCHES "Clang")
+        set_source_files_properties(../src/channelizer_neon.c
+            PROPERTIES COMPILE_FLAGS "-ffast-math")
+        # Apple Clang does not support -march=armv8-a+sve (no SVE on Apple Silicon)
+        if(NOT APPLE)
+            set_source_files_properties(../src/channelizer_sve.c
+                PROPERTIES COMPILE_FLAGS "-march=armv8-a+sve -ffast-math")
+        else()
+            set_source_files_properties(../src/channelizer_sve.c
+                PROPERTIES COMPILE_FLAGS "-ffast-math")
+        endif()
+        # x86 variant files: compile as baseline (linked but never called on ARM)
+        set_source_files_properties(../src/channelizer_sse2.c ../src/channelizer_avx2.c ../src/channelizer_avx512.c
+            PROPERTIES COMPILE_FLAGS "-ffast-math")
+    endif()
+else()
+    # Non-x86, non-ARM (RISC-V, etc.): all variants get baseline fast-math only
+    if("${CMAKE_C_COMPILER_ID}" STREQUAL "GNU" OR "${CMAKE_C_COMPILER_ID}" MATCHES "Clang")
+        set_source_files_properties(../src/channelizer_sse2.c ../src/channelizer_avx2.c ../src/channelizer_avx512.c
+            ../src/channelizer_neon.c ../src/channelizer_sve.c
+            PROPERTIES COMPILE_FLAGS "-ffast-math")
+    endif()
+endif()
+# channelizer.c itself: NO -ffast-math (fixes frequency mapping test failures)
+# cf32_resampler.c: keep DSP optimization flags when native optimizations enabled
 if(DSP_OPTIMIZE_FLAGS)
-    set_source_files_properties(../src/channelizer.c ../src/cf32_resampler.c
+    set_source_files_properties(../src/cf32_resampler.c
+        channelizer-profile.c
         PROPERTIES COMPILE_FLAGS "${DSP_OPTIMIZE_FLAGS}")
 endif()
 

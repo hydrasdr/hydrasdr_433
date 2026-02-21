@@ -186,4 +186,11 @@ void channelizer_free(channelizer_t *ch);
  */
 const char *channelizer_build_info(void);
 
+/**
+ * Get the ISA level selected by runtime CPU dispatch.
+ *
+ * @return Static string: "AVX-512", "AVX2+FMA", "baseline", or "unknown"
+ */
+const char *channelizer_isa_info(void);
+
 #endif /* INCLUDE_CHANNELIZER_H_ */

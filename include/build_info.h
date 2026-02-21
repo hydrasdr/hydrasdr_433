@@ -52,6 +52,10 @@
 #define BUILD_SIMD_STR " SSE4.2"
 #elif defined(__SSE2__) || defined(_M_X64)
 #define BUILD_SIMD_STR " SSE2"
+#elif defined(__ARM_FEATURE_SVE)
+#define BUILD_SIMD_STR " SVE"
+#elif defined(__ARM_NEON)
+#define BUILD_SIMD_STR " NEON"
 #else
 #define BUILD_SIMD_STR ""
 #endif

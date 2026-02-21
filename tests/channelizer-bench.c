@@ -29,7 +29,23 @@
 #include <time.h>
 #include "channelizer.h"
 #include "build_info.h"
+#include "cpu_detect.h"
 #include "rtl_433.h"
+
+/* ISA-dispatched process functions (compiled in separate TUs) */
+extern int channelizer_process_sse2(channelizer_t *ch, const float *input,
+    int n_samples, float **channel_out, int *out_samples);
+extern int channelizer_process_avx2(channelizer_t *ch, const float *input,
+    int n_samples, float **channel_out, int *out_samples);
+extern int channelizer_process_avx512(channelizer_t *ch, const float *input,
+    int n_samples, float **channel_out, int *out_samples);
+extern int channelizer_process_neon(channelizer_t *ch, const float *input,
+    int n_samples, float **channel_out, int *out_samples);
+extern int channelizer_process_sve(channelizer_t *ch, const float *input,
+    int n_samples, float **channel_out, int *out_samples);
+
+typedef int (*channelizer_process_fn_t)(channelizer_t *, const float *, int,
+                                        float **, int *);
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -913,6 +929,172 @@ static void print_benchmark_results(void)
 }
 
 /* ============================================================================
+ * Per-ISA Variant Benchmarks
+ * ========================================================================= */
+
+static bench_result_t run_benchmark_isa(int num_channels, uint32_t sample_rate,
+                                        int n_input, channelizer_process_fn_t fn)
+{
+	bench_result_t result = {0};
+	result.num_channels = num_channels;
+	result.sample_rate = sample_rate;
+	result.input_samples = n_input;
+
+	channelizer_t ch;
+	int ret = channelizer_init(&ch, num_channels, TEST_CENTER_FREQ,
+	                           TEST_BANDWIDTH, sample_rate, (size_t)n_input);
+	if (ret != 0)
+		return result;
+
+	float *input = alloc_cf32(n_input);
+	if (!input) {
+		channelizer_free(&ch);
+		return result;
+	}
+
+	generate_tone(input, n_input, 0.0f, (float)sample_rate, TONE_AMPLITUDE_FULL);
+	add_tone(input, n_input, ch.channel_spacing, (float)sample_rate, TONE_AMPLITUDE_HALF);
+
+	float *channel_out[CHANNELIZER_MAX_CHANNELS];
+	int out_samples;
+
+	/* Warmup */
+	for (int i = 0; i < BENCH_WARMUP_ITER; i++)
+		fn(&ch, input, n_input, channel_out, &out_samples);
+
+	/* Benchmark */
+	double start = get_time_sec();
+	for (int i = 0; i < BENCH_ITERATIONS; i++)
+		fn(&ch, input, n_input, channel_out, &out_samples);
+	double elapsed = get_time_sec() - start;
+
+	double total_samples = (double)n_input * BENCH_ITERATIONS;
+	result.process_time_us = (elapsed * US_PER_SEC) / BENCH_ITERATIONS;
+	result.samples_per_sec = total_samples / elapsed;
+	result.realtime_margin = result.samples_per_sec / (double)sample_rate;
+
+	free(input);
+	channelizer_free(&ch);
+
+	return result;
+}
+
+static void print_isa_benchmark_results(void)
+{
+	printf("\n");
+	printf("=============================================================\n");
+	printf("              PER-ISA VARIANT BENCHMARKS\n");
+	printf("=============================================================\n");
+	printf("\n");
+	printf("  Dispatched ISA: %s\n", channelizer_isa_info());
+
+	enum cpu_isa_level isa = cpu_detect_isa();
+
+	/*
+	 * Build the list of ISA variants to benchmark.
+	 * Architecture-conditional: only list variants that are meaningful
+	 * for the current CPU architecture.
+	 */
+#if defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || defined(_M_IX86)
+	struct {
+		const char *name;
+		channelizer_process_fn_t fn;
+		enum cpu_isa_level min_isa;
+	} variants[] = {
+		{"baseline",  channelizer_process_sse2,   CPU_ISA_BASELINE},
+		{"AVX2+FMA",  channelizer_process_avx2,   CPU_ISA_AVX2},
+		{"AVX-512",   channelizer_process_avx512, CPU_ISA_AVX512},
+	};
+#elif defined(__aarch64__) || defined(_M_ARM64)
+	struct {
+		const char *name;
+		channelizer_process_fn_t fn;
+		enum cpu_isa_level min_isa;
+	} variants[] = {
+		{"NEON",  channelizer_process_neon, CPU_ISA_NEON},
+		{"SVE",   channelizer_process_sve,  CPU_ISA_SVE},
+	};
+#else
+	struct {
+		const char *name;
+		channelizer_process_fn_t fn;
+		enum cpu_isa_level min_isa;
+	} variants[] = {
+		{"baseline",  channelizer_process_sse2, CPU_ISA_BASELINE},
+	};
+#endif
+	int num_variants = sizeof(variants) / sizeof(variants[0]);
+
+	/* Count usable variants */
+	int usable = 0;
+	for (int v = 0; v < num_variants; v++) {
+		if (isa >= variants[v].min_isa)
+			usable++;
+	}
+	printf("  Usable ISA levels: %d of %d\n\n", usable, num_variants);
+
+	/* Benchmark config: 8-ch @ 2.5 MSps (representative workload) */
+	int test_ch = 8;
+	uint32_t test_rate = WIDEBAND_RATE_2M5;
+	int test_samples = BUFFER_SIZE_DEFAULT;
+
+	printf("  Workload: %d-ch @ %.1f MSps, %d samples/call\n\n",
+	       test_ch, (float)test_rate / (float)MSPS_DIVISOR, test_samples);
+	printf("  %-12s  %8s  %8s  %9s  %8s\n",
+	       "ISA Level", "Time/call", "MSps", "RT Margin", "Status");
+	printf("  %-12s  %8s  %8s  %9s  %8s\n",
+	       "------------", "--------", "--------", "---------", "--------");
+
+	double baseline_msps = 0.0;
+	double best_msps = 0.0;
+
+	for (int v = 0; v < num_variants; v++) {
+		if (isa < variants[v].min_isa) {
+			printf("  %-12s  %8s  %8s  %9s  %8s\n",
+			       variants[v].name, "-", "-", "-", "N/A");
+			continue;
+		}
+
+		bench_result_t r = run_benchmark_isa(test_ch, test_rate,
+		                                     test_samples, variants[v].fn);
+
+		if (r.process_time_us > 0) {
+			double msps = r.samples_per_sec / MSPS_DIVISOR;
+			if (v == 0)
+				baseline_msps = msps;
+			best_msps = msps;
+
+			char speedup[32] = "";
+			if (v > 0 && baseline_msps > 0)
+				snprintf(speedup, sizeof(speedup), " (%.2fx)",
+				         msps / baseline_msps);
+
+			const char *status = r.realtime_margin > BENCH_RT_MARGIN_GOOD ? "OK" :
+			                     r.realtime_margin > BENCH_RT_MARGIN_MIN ? "MARGINAL" : "SLOW";
+			printf("  %-12s  %6.0f us  %6.1f M  %7.1fx  %5s%s\n",
+			       variants[v].name,
+			       r.process_time_us,
+			       msps,
+			       r.realtime_margin,
+			       status, speedup);
+		}
+	}
+
+	printf("\n");
+	printf("  Note: Each variant is called directly, bypassing the dispatch pointer.\n");
+	printf("  The dispatched path adds ~1 ns overhead (negligible).\n");
+
+	/* Detect when -march=native makes all variants identical */
+	if (usable >= 2 && baseline_msps > 0 && best_msps > 0) {
+		if (fabs(best_msps - baseline_msps) / baseline_msps < 0.05) {
+			printf("\n  Hint: All ISA variants show similar throughput.\n");
+			printf("  If built with -DENABLE_NATIVE_OPTIMIZATIONS=ON, all variants\n");
+			printf("  use -march=native. Rebuild with =OFF for true ISA comparison.\n");
+		}
+	}
+}
+
+/* ============================================================================
  * Main
  * ========================================================================= */
 
@@ -993,8 +1175,16 @@ int main(int argc, char *argv[])
 	printf("  Build: " BUILD_INFO_STR "\n");
 	printf("  %s\n", channelizer_build_info());
 
+	/* Detect CPU ISA directly (channelizer_isa_info() needs init first) */
+	{
+		const char *isa_names[] = {"baseline", "AVX2+FMA", "AVX-512", "NEON", "SVE"};
+		enum cpu_isa_level isa = cpu_detect_isa();
+		printf("  CPU ISA: %s\n", isa_names[isa]);
+	}
+
 	run_correctness_tests();
 	print_benchmark_results();
+	print_isa_benchmark_results();
 
 	printf("\n");
 	printf("=============================================================\n");

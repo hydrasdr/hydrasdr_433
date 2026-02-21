@@ -24,6 +24,7 @@
 #include "channelizer.h"
 #include "build_info.h"
 #include "hydrasdr_lfft.h"
+#include "fft_kernels.h"
 #include "rtl_433.h"
 
 #ifndef M_PI
@@ -567,6 +568,146 @@ static void run_profile(const struct profile_config *cfg)
 }
 
 /*===========================================================================
+ * FFT Kernel Verification + Benchmark
+ *===========================================================================*/
+
+/**
+ * Verify specialized FFT kernel against hlfft_forward_soa reference.
+ * Returns max absolute error across all bins.
+ */
+static float verify_fft_kernel(int N,
+			       void (*kernel)(const float *, const float *,
+					      float *, float *))
+{
+	float in_re[16], in_im[16];
+	float out_re[16], out_im[16];
+	float ref_re[16], ref_im[16];
+	float max_err = 0.0f;
+
+	/* Deterministic pseudo-random input */
+	for (int i = 0; i < N; i++) {
+		in_re[i] = sinf((float)i * 1.7f + 0.3f);
+		in_im[i] = cosf((float)i * 2.3f - 0.7f);
+	}
+
+	/* Reference: hlfft_forward_soa */
+	hlfft_plan_t *plan = hlfft_plan_create((size_t)N, NULL);
+	if (!plan) {
+		printf("    FAIL: could not create FFT plan for N=%d\n", N);
+		g_fail++;
+		return 1e10f;
+	}
+	hlfft_forward_soa(plan, in_re, in_im, ref_re, ref_im);
+
+	/* Specialized kernel */
+	kernel(in_re, in_im, out_re, out_im);
+
+	/* Compare */
+	for (int i = 0; i < N; i++) {
+		float err_re = fabsf(out_re[i] - ref_re[i]);
+		float err_im = fabsf(out_im[i] - ref_im[i]);
+		if (err_re > max_err) max_err = err_re;
+		if (err_im > max_err) max_err = err_im;
+	}
+
+	hlfft_plan_destroy(plan);
+	return max_err;
+}
+
+static void run_kernel_verification(void)
+{
+	struct {
+		int n;
+		const char *name;
+		void (*kernel)(const float *, const float *, float *, float *);
+	} kernels[] = {
+		{2,  "fft2_forward_soa",  fft2_forward_soa},
+		{4,  "fft4_forward_soa",  fft4_forward_soa},
+		{8,  "fft8_forward_soa",  fft8_forward_soa},
+		{16, "fft16_forward_soa", fft16_forward_soa},
+	};
+	int n_kernels = sizeof(kernels) / sizeof(kernels[0]);
+
+	printf("\n  FFT Kernel Correctness (vs hlfft_forward_soa reference):\n");
+
+	for (int i = 0; i < n_kernels; i++) {
+		float err = verify_fft_kernel(kernels[i].n, kernels[i].kernel);
+		int ok = err < 1e-5f;
+		check(ok, kernels[i].name);
+		printf("    %-24s max_err=%.2e  %s\n",
+		       kernels[i].name, err, ok ? "OK" : "FAIL");
+	}
+}
+
+/**
+ * Benchmark specialized FFT kernels vs generic hlfft_forward_soa.
+ */
+static void run_kernel_benchmark(void)
+{
+	struct {
+		int n;
+		const char *name;
+		void (*kernel)(const float *, const float *, float *, float *);
+	} kernels[] = {
+		{2,  "fft2  specialized",  fft2_forward_soa},
+		{4,  "fft4  specialized",  fft4_forward_soa},
+		{8,  "fft8  specialized",  fft8_forward_soa},
+		{16, "fft16 specialized",  fft16_forward_soa},
+	};
+	int n_kernels = sizeof(kernels) / sizeof(kernels[0]);
+
+	printf("\n  FFT Kernel Benchmark (specialized vs generic library):\n");
+	printf("  %-24s %8s %8s %8s\n", "Kernel", "Spec ns", "Lib ns", "Speedup");
+	printf("  ------------------------------------------------------------\n");
+
+	for (int ki = 0; ki < n_kernels; ki++) {
+		int N = kernels[ki].n;
+		float in_re[16], in_im[16];
+		float out_re[16], out_im[16];
+		double t0, t_spec, t_lib;
+		int iters = 2000000;
+
+		for (int i = 0; i < N; i++) {
+			in_re[i] = sinf((float)i * 1.7f + 0.3f);
+			in_im[i] = cosf((float)i * 2.3f - 0.7f);
+		}
+
+		hlfft_plan_t *plan = hlfft_plan_create((size_t)N, NULL);
+		if (!plan)
+			continue;
+
+		/* Warmup */
+		for (int i = 0; i < 10000; i++) {
+			kernels[ki].kernel(in_re, in_im, out_re, out_im);
+			hlfft_forward_soa(plan, in_re, in_im, out_re, out_im);
+		}
+
+		/* Bench specialized */
+		t0 = get_time_sec();
+		for (int i = 0; i < iters; i++)
+			kernels[ki].kernel(in_re, in_im, out_re, out_im);
+		t_spec = get_time_sec() - t0;
+		g_sink = out_re[0] + out_im[0];
+
+		/* Bench generic */
+		t0 = get_time_sec();
+		for (int i = 0; i < iters; i++)
+			hlfft_forward_soa(plan, in_re, in_im, out_re, out_im);
+		t_lib = get_time_sec() - t0;
+		g_sink = out_re[0] + out_im[0];
+
+		double ns_spec = t_spec / (double)iters * 1e9;
+		double ns_lib  = t_lib  / (double)iters * 1e9;
+		double speedup = t_lib / t_spec;
+
+		printf("  %-24s %7.1f  %7.1f  %6.2fx\n",
+		       kernels[ki].name, ns_spec, ns_lib, speedup);
+
+		hlfft_plan_destroy(plan);
+	}
+}
+
+/*===========================================================================
  * Main
  *===========================================================================*/
 
@@ -599,6 +740,16 @@ int main(void)
 	printf("\n  Correctness: %d passed, %d failed\n", g_pass, g_fail);
 
 	/*
+	 * Part 1b: FFT kernel verification
+	 */
+	printf("\n============================================================\n");
+	printf("  FFT KERNEL VERIFICATION\n");
+	printf("============================================================\n");
+	run_kernel_verification();
+	printf("\n  Correctness (incl. kernels): %d passed, %d failed\n",
+	       g_pass, g_fail);
+
+	/*
 	 * Part 2: Performance profiling
 	 */
 	printf("\n============================================================\n");
@@ -614,6 +765,14 @@ int main(void)
 
 	for (int i = 0; i < n_prof; i++)
 		run_profile(&prof_cfgs[i]);
+
+	/*
+	 * Part 3: FFT kernel benchmark
+	 */
+	printf("\n============================================================\n");
+	printf("  FFT KERNEL BENCHMARK\n");
+	printf("============================================================\n");
+	run_kernel_benchmark();
 
 	printf("\n============================================================\n");
 	printf("  SUMMARY\n");
