@@ -298,16 +298,10 @@ if(NOT HydraSDR_FOUND)
                        _upstream_cmake "${_upstream_cmake}")
         file(WRITE "${hydrasdr_host_SOURCE_DIR}/CMakeLists.txt" "${_upstream_cmake}")
 
-        if(MSVC)
-            # MSVC: use full upstream CMakeLists.txt (handles libusb download + pthreads4w)
-            add_subdirectory(${hydrasdr_host_SOURCE_DIR} ${hydrasdr_host_BINARY_DIR})
-        else()
-            # MinGW/Linux: only need the library, skip MSVC-specific deps
-            add_subdirectory(
-                ${hydrasdr_host_SOURCE_DIR}/libhydrasdr
-                ${hydrasdr_host_BINARY_DIR}/libhydrasdr
-            )
-        endif()
+        # Use patched upstream CMakeLists.txt for all platforms.
+        # MSVC-specific deps (libusb download, pthreads4w) are gated by if(MSVC)
+        # in the upstream, so Linux/macOS simply skip them.
+        add_subdirectory(${hydrasdr_host_SOURCE_DIR} ${hydrasdr_host_BINARY_DIR})
 
         # After add_subdirectory, the library target 'hydrasdr' should be available
         if(TARGET hydrasdr)

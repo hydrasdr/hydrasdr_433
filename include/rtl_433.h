@@ -27,12 +27,9 @@
 
 #define WIDEBAND_MAX_CHANNELS 16
 #define WIDEBAND_BW_MARGIN    1.25f  /**< Sample rate margin over bandwidth for filter margins */
-#ifdef HYDRASDR
-/* HydraSDR native sample rates (no resampling needed) */
 #define WIDEBAND_RATE_2M5     2500000   /**< 2.5 MSps - for up to 2 MHz bandwidth */
 #define WIDEBAND_RATE_5M      5000000   /**< 5 MSps - for up to 4 MHz bandwidth */
 #define WIDEBAND_RATE_10M     10000000  /**< 10 MSps - for up to 8 MHz bandwidth */
-#endif
 
 struct sdr_dev;
 struct r_device;

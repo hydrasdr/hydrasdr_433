@@ -46,7 +46,7 @@ def replace_block(from_pattern, to_pattern, repl, filepath):
 def get_help_text(option):
     try:
         help_text = subprocess.check_output(
-            ["./build/src/rtl_433", "-c", "0", option], stderr=subprocess.STDOUT).decode('utf-8')
+            ["./build/src/hydrasdr_433", "-c", "0", option], stderr=subprocess.STDOUT).decode('utf-8')
     except subprocess.CalledProcessError as e:
         help_text = e.output.decode('utf-8')
 
@@ -125,7 +125,7 @@ r_devices_used = len(r_devices) + 5
 
 # src/CMakeLists.txt
 repl = src_files + device_files
-repl.remove('rtl_433.c') # exclude apps from lib sources
+repl.remove('hydrasdr_433.c') # exclude apps from lib sources
 repl = '\n    ' + ('\n    '.join(repl)) + '\n'
 replace_block(r'add_library\(r_433 STATIC$',
               r'^\)', repl, 'src/CMakeLists.txt')
@@ -139,8 +139,8 @@ replace_block(r'add_library\(r_433 STATIC$',
 # check that everything between '#define DEVICES' and \n\n with DECL(device_name) matches r_devices
 # TODO: implement the check...
 
-if (not os.path.isfile("./build/src/rtl_433")):
-    print("\nWARNING: rtl_433 binary not found: skipping README/man generation!\n")
+if (not os.path.isfile("./build/src/hydrasdr_433")):
+    print("\nWARNING: hydrasdr_433 binary not found: skipping README/man generation!\n")
     exit(0)
 
 # README.md
@@ -157,7 +157,7 @@ repl2 += get_help_text('-w') + '\n'
 replace_block(r'```',
               r'```', repl + devices + repl2, 'README.md')
 
-# conf/rtl_433.example.conf
+# conf/hydrasdr_433.example.conf
 parsed_devices = parse_devices(devices)
 conf_text = ""
 for dev_num, dev_descr, disabled in parsed_devices:
@@ -168,7 +168,7 @@ for dev_num, dev_descr, disabled in parsed_devices:
     #print(dev_num, "-" if disabled else "+", dev_descr)
 print(conf_text)
 replace_block(r'## Protocols to enable \(command line option \"-R\"\)\n',
-        "## Flex devices", "\n" + conf_text + "\n", "conf/rtl_433.example.conf")
+        "## Flex devices", "\n" + conf_text + "\n", "conf/hydrasdr_433.example.conf")
 
 # MAN pages
 repl = markup_man_text(repl + repl2)

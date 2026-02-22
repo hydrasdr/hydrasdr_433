@@ -1615,6 +1615,7 @@ int sdr_apply_settings(sdr_dev_t *dev, char const *sdr_settings, int verbose)
     return -1;
 }
 
+#ifdef HYDRASDR
 /**
  * AGC-to-stage mapping table.
  * Maps each AGC gain type to the stage it controls.
@@ -1641,6 +1642,7 @@ static int hydrasdr_stage_has_agc_on(hydrasdr_ctx_t *ctx, hydrasdr_gain_type_t s
     }
     return 0;
 }
+#endif /* HYDRASDR */
 
 void sdr_show_gain_state(sdr_dev_t *dev)
 {

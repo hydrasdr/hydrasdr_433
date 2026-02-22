@@ -12,10 +12,10 @@ add_library(r_433 STATIC
     bitbuffer.c
     cf32_resampler.c
     channelizer.c
-    channelizer_sse2.c
     channelizer_avx2.c
     channelizer_avx512.c
     channelizer_neon.c
+    channelizer_sse2.c
     channelizer_sve.c
     compat_paths.c
     compat_time.c
@@ -288,6 +288,7 @@ add_library(r_433 STATIC
     devices/tpms_toyota.c
     devices/tpms_truck.c
     devices/tpms_tyreguard400.c
+    devices/tpms_vdo_tg1c.c
     devices/ts_ft002.c
     devices/ttx201.c
     devices/universalfanctrl.c
