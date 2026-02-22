@@ -15,20 +15,20 @@ The `-B` option splits the RF spectrum into parallel narrowband channels, each d
 
 ```bash
 hydrasdr_433 -B 433.92M:2M:8      # EU 433 ISM band, 8 channels over 2 MHz
-hydrasdr_433 -B 868.5M:2M:8       # EU 868 SRD band, 8 channels over 2 MHz (covers 868.2-868.95)
 hydrasdr_433 -B 915M:8M:16        # US 915 ISM band, 16 channels over 8 MHz
 ```
 
-For narrowband monitoring at a single frequency, use `-f` instead:
+Use `-B` when the ISM band is wider than single-frequency capture:
 
-```bash
-hydrasdr_433 -f 868.3M             # Single-channel at 868.3 MHz
-hydrasdr_433 -f 915M               # Single-channel at 915 MHz
-```
+| Band | ISM Width | Single-freq | Recommendation |
+|------|-----------|-------------|----------------|
+| 433 MHz | 1.74 MHz | 250 kHz | `-B` wideband needed |
+| 868 MHz | 600 kHz | 1 MHz (auto) | `-f 868.5M` covers full band |
+| 915 MHz | 26 MHz | 1 MHz (auto) | `-B` wideband needed |
 
 Frequencies above 800 MHz automatically use 1 MSps (instead of the 250k default) for wider FSK coverage.
 
-Wideband mode decodes all channels in parallel, with cross-channel deduplication suppressing duplicates from overlapping channels. Use `-B` when you need to cover a wide frequency range; use `-f` when you know the exact frequency of interest.
+Wideband mode decodes all channels in parallel, with cross-channel deduplication suppressing duplicates from overlapping channels.
 
 ### Polyphase Filter Bank Channelizer (OS-PFB)
 
@@ -129,8 +129,8 @@ hydrasdr_433 -h
 |---------|-------------|
 | `hydrasdr_433` | Default: listen at 433.92 MHz, 250k sample rate |
 | `hydrasdr_433 -B 433.92M:2M:8` | Wideband: scan 2 MHz around 433.92 MHz with 8 channels |
-| `hydrasdr_433 -B 868.5M:2M:8 -F json` | Wideband 868 MHz SRD band, JSON output |
-| `hydrasdr_433 -f 868.3M` | Single-channel at 868.3 MHz |
+| `hydrasdr_433 -f 868.5M` | EU 868 SRD band (auto 1 MSps covers full 600 kHz band) |
+| `hydrasdr_433 -B 915M:8M:16` | Wideband: scan 8 MHz around 915 MHz with 16 channels |
 | `hydrasdr_433 -C si` | Convert units to metric |
 | `hydrasdr_433 -R 1 -R 8 -R 43` | Enable only specific protocol decoders |
 | `hydrasdr_433 -A` | Pulse analyzer mode |
