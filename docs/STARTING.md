@@ -1,10 +1,10 @@
 # Getting Started
 
-A short summary how to operate `rtl_433`.
+A short summary how to operate `hydrasdr_433`.
 
 ## Options
 
-Add options to the `rtl_433` command line invocation to specify the mode of operation.
+Add options to the `hydrasdr_433` command line invocation to specify the mode of operation.
 
 E.g. the option `-V` will output the version string and exit,
 the option `-h` will output a brief usage help and exit.
@@ -47,28 +47,25 @@ An example configuration file with information on all possible options is provid
 
 ## Select an input
 
-`rtl_433` can read live inputs (SDR hardware and network streams), sample files, and test codes.
+`hydrasdr_433` can read live inputs (HydraSDR hardware and network streams), sample files, and test codes.
 
 Choose a live input with `-d`:
-- `-d <RTL-SDR USB device index>` e.g. `-d 0` for the first RTL-SDR found,
-- `-d :<RTL-SDR USB device serial>` e.g. `-d :NESDRSMA` (set the serial using the `rtl_eeprom` tool)
-- `-d <SoapySDR device query>` e.g. `-d driver=lime`
+- `-d hydrasdr` Use the first available HydraSDR device (default)
+- `-d hydrasdr:0` Use HydraSDR device by index
+- `-d hydrasdr:serial=XXXX` Use HydraSDR device by serial number
 - `-d rtl_tcp` e.g. `-d rtl_tcp://192.168.1.2:1234`
 
-The default is to use the first RTL-SDR available (`-d 0`).
-You can switch that to using the first SoapySDR available by using `-d ""`, i.e. the empty SoapySDR search string.
-
 ::: warning
-When running multiple instances of `rtl_433` be sure to use a distinct input for each, do not rely on the auto-selection of the first available input.
+When running multiple instances of `hydrasdr_433` be sure to use a distinct input for each, do not rely on the auto-selection of the first available input.
 :::
 
 Choose a file input using `-r` e.g. `-r g001_433.92M_250k.cu8`
-If you list files to read as last options then you can omit the `-r` e.g. `rtl_433 g001_433.92M_250k.cu8`
+If you list files to read as last options then you can omit the `-r` e.g. `hydrasdr_433 g001_433.92M_250k.cu8`
 
 If you are testing a decoder you can list a demodulated bit pattern as input using the `-y` option, e.g. `-y "{25}fb2dd58"`
 
 ::: tip
-    [-d <RTL-SDR USB device index> | :<RTL-SDR USB device serial> | <SoapySDR device query> | rtl_tcp | help]
+    [-d hydrasdr | hydrasdr:<index> | hydrasdr:serial=<hex> | rtl_tcp | help]
     [-r <filename> | help] Read data from input file instead of a receiver
     [-y <code>] Verify decoding of demodulated test data (e.g. "{25}fb2dd58") with enabled devices
 :::
@@ -89,7 +86,7 @@ The default sample rate for `433.92M` is `250k` Hz and `1000k` for higher freque
 Select a sample rate using `-s <sample rate>` -- rates higher than `1024k` or maybe `2048k` are not recommended.
 
 Specific settings for an SDR device can be given with `-g <gain>`, `-p <ppm_error>`,
-and even `-t <settings>` to apply a list of keyword=value settings for SoapySDR devices.
+and even `-t <settings>` to apply a list of keyword=value settings for HydraSDR devices.
 
 ::: tip
     [-f <frequency>] Receive frequency(s) (default: 433920000 Hz)
@@ -97,9 +94,9 @@ and even `-t <settings>` to apply a list of keyword=value settings for SoapySDR 
     [-E hop | quit] Hop/Quit after outputting successful event(s)
     [-s <sample rate>] Set sample rate (default: 250000 Hz)
     [-g <gain> | help] (default: auto)
-    [-t <settings>] apply a list of keyword=value settings for SoapySDR devices
-         e.g. -t "antenna=A,bandwidth=4.5M,rfnotch_ctrl=false"
-    [-p <ppm_error>] Correct rtl-sdr tuner frequency offset error (default: 0)
+    [-t <settings>] apply a list of keyword=value settings for HydraSDR devices
+         e.g. -t "biastee=1,bandwidth=2500000,decimation=1"
+    [-p <ppm_error>] Correct tuner frequency offset error (default: 0)
 :::
 
 ## Wideband scanning (HydraSDR)
@@ -134,10 +131,10 @@ hydrasdr_433 -B 915M:8M:16 -v -M level
 
 ## Verbose output
 
-If `rtl_433` seems to "hang", it's usually just not receiving any signals that can be successfully decoded.
+If `hydrasdr_433` seems to "hang", it's usually just not receiving any signals that can be successfully decoded.
 The default is to be silent until there is a solid data reception.
 
-Instruct `rtl_433` not to be silent, use:
+Instruct `hydrasdr_433` not to be silent, use:
 -  `-v` to show detailed notes on startup,
 -  `-vv` to show failed decoding attempts,
 -  `-vvv` to show all decoding attempts,
@@ -157,7 +154,7 @@ Alternatively get periodic status output using: `-M level` `-M noise` `-M stats:
 
 ## Select outputs
 
-The default output of `rtl_433`, if no outputs are selected, is to the screen.
+The default output of `hydrasdr_433`, if no outputs are selected, is to the screen.
 Any number of outputs can be selected:
 - `-F kv` prints to the screen
 - `-F json` prints json lines
@@ -187,7 +184,7 @@ You can write all received raw data to a file with `-w <filename>` (or  `-W <fil
 
 ## Store raw sample data
 
-`rtl_433` can write a file for each received signal.
+`hydrasdr_433` can write a file for each received signal.
 This is the preferred mode for generating files to later analyze or add as test cases.
 Use
 - `-S all` to write all signals to files,
@@ -300,12 +297,12 @@ Use
 
 ## Mode of operation
 
-When reading live inputs `rtl_433` will usually run forever, but you can limit the runtime
+When reading live inputs `hydrasdr_433` will usually run forever, but you can limit the runtime
 - to a specific time using `-T <seconds>`, also formats like `12:34` or `1h23m45s` are accepted,
 - to a number of samples using `-n <value>` as a number of samples to take (each sample is an I/Q pair),
 - to receiving an event using `-E quit`, to quit after outputting the first event.
 
-When reading input from files `rtl_433` will process the data as fast as possible.
+When reading input from files `hydrasdr_433` will process the data as fast as possible.
 You can limit the processing to original (or N-times) real-time using `-M replay[:N]`.
 
 ::: tip

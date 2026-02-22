@@ -1,65 +1,38 @@
-# Basic rtl_433 operation
+# Basic hydrasdr_433 operation
 
-The principle buildings blocks of rtl_433 are: Inputs, Loaders, Processing, Analysis, Decoders, Dumpers, Outputs.
+The principle building blocks of hydrasdr_433 are: Inputs, Loaders, Processing, Analysis, Decoders, Dumpers, Outputs.
 
-At startup rtl_433 will read config files and parse command line arguments, then it will loop through these steps:
+At startup hydrasdr_433 will read config files and parse command line arguments, then it will loop through these steps:
 
-- Inputs: rtl_tcp, RTL-SDR, SoapySDR
-- Loaders: Raw data files (cu8, cs16, ...)
+- Inputs: HydraSDR, rtl_tcp
+- Loaders: Raw data files (cu8, cs16, cf32, ...)
 - Processing: OOK and FSK demod, pulse detector, slicers, coding
 - Analysis: Show statistics on pulses
-- Decoders: Over 200 protocols
-- Dumpers: Raw data files (cu8, cs16, ..., sr, ...)
+- Decoders: Over 290 protocols
+- Dumpers: Raw data files (cu8, cs16, cf32, ..., sr, ...)
 - Outputs: Screen (kv), JSON, CSV, MQTT, Influx, UDP (syslog), HTTP
 
-rtl_433 will either acquire a live signal from an input or read a sample file with a loader.
-Then process that signal, analyse it's properties (if enabled) and write the signal with dumpers (if enabled).
+hydrasdr_433 will either acquire a live signal from an input or read a sample file with a loader.
+Then process that signal, analyse its properties (if enabled) and write the signal with dumpers (if enabled).
 The raw data is run through decoders to produce decoded output data.
+
+In wideband mode (`-B`), the input is additionally split into parallel narrowband channels via the PFB channelizer before processing.
 
 ## Inputs
 
-Possible inputs are RTL-SDR, SoapySDR, and rtl_tcp.
+Possible inputs are HydraSDR and rtl_tcp.
 
-Inputs are selected with the `-d` option:
-```
-  [-d <RTL-SDR USB device index> | :<RTL-SDR USB device serial> | <SoapySDR device query> | rtl_tcp | help]
-```
+### HydraSDR
 
-### RTL-SDR
-
-For RTL-SDR use the `-d` option as:
+The default input is the first available HydraSDR device. Use the `-d` option to select a specific device:
 
 ```
-  [-d <RTL-SDR USB device index>] (default: 0)
-  [-d :<RTL-SDR USB device serial (can be set with rtl_eeprom -s)>]
+  [-d hydrasdr] Use first available HydraSDR device
+  [-d hydrasdr:0] Use HydraSDR device by index
+  [-d hydrasdr:serial=XXXX] Use HydraSDR device by serial number (hex)
 ```
 
-If RTL-SDR support is compiled in (see the first line of `rtl_433 -V`) the default input will be the first available RTL-SDR device.
-This can also explicitly be selected with `rtl_433 -d 0`. Use e.g. `rtl_433 -d 1` to select the second device.
-
-If you have set a serial number on your device you can use that number prefixed with a colon to select a device,
-e.g. `rtl_433 -d :NESDRSMA`.
-
-The sample format read from RTL-SDR is always `CU8`.
-
-### SoapySDR
-
-For SoapySDR use the `-d` option as:
-
-```
-  [-d ""] Open default SoapySDR device
-  [-d driver=rtlsdr] Open e.g. specific SoapySDR device
-```
-
-If SoapySDR support is compiled in (see the first line of `rtl_433 -V`) and RTL-SDR is not then the default input will be the first available SoapySDR device.
-This can also explicitly be selected with `rtl_433 -d ""`.
-
-Otherwise specify a driver string to select the SoapySDR device. Use e.g. `rtl_433 -d "driver=rtlsdr"` to use RTL-SDR over Soapy.
-
-Usual SoapySDR driver string are e.g. `"driver=remote,remote=tcp://192.168.2.1:55132"`, `"driver=plutosdr"`, etc.
-
-The sample format read from SoapySDR is likely `CS16`.
-A sample format of `CU8` is tried first, but unlikely to be supported by SoapySDR drivers.
+The sample format from HydraSDR is native `CF32` (complex float32).
 
 ### rtl_tcp
 
@@ -72,7 +45,7 @@ For rtl_tcp use the `-d` option as:
 
 The rtl_tcp input is always available. The default host is "localhost" and default port is "1234".
 
-Use e.g. `rtl_433 -d rtl_tcp:192.168.2.1` or `rtl_433 -d rtl_tcp:192.168.2.1:2143` to select a specific source.
+Use e.g. `hydrasdr_433 -d rtl_tcp:192.168.2.1` or `hydrasdr_433 -d rtl_tcp:192.168.2.1:2143` to select a specific source.
 
 ### Input Gain
 
@@ -80,29 +53,18 @@ The input device gain can be set with the `-g` option:
 
 ```
   [-g <gain>] (default: auto)
-    For RTL-SDR: gain in dB ("0" is auto).
-    For SoapySDR: gain in dB for automatic distribution ("" is auto), or string of gain elements.
-    E.g. "LNA=20,TIA=8,PGA=2" for LimeSDR.
-
+    For HydraSDR: 0 for auto (AGC enabled), or use -t settings for manual gain control.
 ```
 
-The default gain setting will be automatic gain (AGC enabled).
+The default gain setting is automatic gain (AGC enabled).
 
-For RTL-SDR the gain is given in dB, where "0" selects automatic gain.
+### Device Settings
 
-For SoapySDR a gain argument of `""` selects automatic gain,
-a gain value in dB can be used for automatic distribution to the gain stages,
-and string of gain elements sets the given gain stages individually.
-
-Use e.g. `-g "LNA=20,TIA=8,PGA=2"` for LimeSDR.
-
-### Antenna and settings
-
-For SoapySDR the antenna and various other settings can be selected with `-t`:
+HydraSDR-specific settings can be applied with `-t`:
 
 ```
-  [-t <settings>] apply a list of keyword=value settings for SoapySDR devices
-       e.g. -t "antenna=A,bandwidth=4.5M,rfnotch_ctrl=false"
+  [-t <settings>] apply a list of keyword=value settings for HydraSDR
+       e.g. -t "biastee=1,bandwidth=2500000,decimation=1"
 ```
 
 ### Center Frequency
@@ -135,7 +97,7 @@ A PPM error correction value can be given with `-p`:
   [-p <ppm_error] Correct rtl-sdr tuner frequency offset error (default: 0)
 ```
 
-The PPM error correction is most commonly used to counter the drift in warmed up RTL-SDR devices.
+The PPM error correction can be used to counter tuner frequency offset errors.
 
 ### Sample rate
 
@@ -149,7 +111,7 @@ The default sample rate is 250 kHz and can be explicitly requested with `-s 250k
 
 You can give a sample rate in Hz, like `-s 250000` or use suffixes of `k`, `M`, or `G`,
 e.g. `-f 250k`, or `-f 8M`.
-Note that the suffix is metric, the 1024000 Hz sample rate common with RTL-SDR has to be given as `-s 1024k`.
+Note that the suffix is metric, e.g. the 1024000 Hz sample rate has to be given as `-s 1024k`.
 
 ## Decoders
 
@@ -164,7 +126,7 @@ Decoders can be selected with the `-R` and `-X` option:
 By default all decoders with proper validity checking are enabled.
 
 You can disable selected decoders with any number of `-R -<number>` options.
-E.g. use `rtl_433 -R -8 -19` to disable the LaCrosse and Nexus decoders.
+E.g. use `hydrasdr_433 -R -8 -19` to disable the LaCrosse and Nexus decoders.
 
 Some decoders have little validity checking and may share very common signal characteristics.
 This will result in lots of false-positive decodes.
@@ -172,13 +134,13 @@ These decoders are not enabled by default and you need to explicitly enable them
 
 You can enable only selected decoders with any number of `-R <number>` options.
 Note that this will override the default and not select any decoder by default.
-E.g. use `rtl_433 -R 8 19` to enable only the LaCrosse and Nexus decoders.
+E.g. use `hydrasdr_433 -R 8 19` to enable only the LaCrosse and Nexus decoders.
 
 An output line of `Registered <n> out of <N> device decoding protocols` will tersely show the enabled decoders.
 
 Lastly the `-X` option can be used to add a custom flex decoder.
 This can be used with `-R 0` to disable all default decoders.
-E.g. `rtl_433 -R 0 -X "<spec>"` will only run your given custom decoder.
+E.g. `hydrasdr_433 -R 0 -X "<spec>"` will only run your given custom decoder.
 
 ## Flex Decoder
 
@@ -299,10 +261,10 @@ E.g. a two (or dominant count) pulse widths with a sinle gap widths or single pe
 Disable all decoders with `-R 0` if you want to view the analyzer output only.
 
 The `-S` option allows you to dump received transmissions for further analysis.
-Use e.g. `rtl_433 -S all` to dump all signals or `rtl_433 -S unknown` to dump only signals with no successful decodes (by enabled decoders).
+Use e.g. `hydrasdr_433 -S all` to dump all signals or `hydrasdr_433 -S unknown` to dump only signals with no successful decodes (by enabled decoders).
 
-On file will be created per signal, see also "File names".
-Note: Saves raw I/Q samples `CU8` (uint8 pcm, 2 channel) for RTL-SDR and `CS16` (int16 pcm, 2 channel) for SoapySDR.
+One file will be created per signal, see also "File names".
+Note: Saves raw I/Q samples. Format depends on the input source (e.g. `CF32` for HydraSDR).
 
 ## Loaders and Dumpers
 
@@ -344,7 +306,7 @@ File content and format options are:
 `am.s16`, `am.f32`, `fm.s16`, `fm.f32`,
 `i.f32`, `q.f32`, `logic.u8`, `ook`, and `vcd`.
 
-For example you can dump the live decoded pulse data to stdout with `rtl_433 -w OOK:-`.
+For example you can dump the live decoded pulse data to stdout with `hydrasdr_433 -w OOK:-`.
 
 ### Load bitbuffer code
 
@@ -564,14 +526,14 @@ With `-C customary` units are converted to customary units:
 
 ## Filter output with bridges
 
-You can grab the decoded output from rtl_433 in various ways, then process and relay it somewhere.
+You can grab the decoded output from hydrasdr_433 in various ways, then process and relay it somewhere.
 
 ### Pipes
 
 The simplest (but not very flexible or stable) way is to use pipes.
 E.g. capture the decode JSON messages and relay the to MQTT with
 
-`rtl_433 -F json -M utc | mosquitto_pub -t home/rtl_433 -l`
+`hydrasdr_433 -F json -M utc | mosquitto_pub -t home/hydrasdr_433 -l`
 
 See also
 [rtl_433_collectd_pipe.py](https://github.com/merbanan/rtl_433/blob/master/examples/rtl_433_collectd_pipe.py), and

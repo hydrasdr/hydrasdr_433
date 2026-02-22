@@ -5,8 +5,6 @@ hydrasdr_433 is a fork of rtl_433 with native HydraSDR support and wideband scan
 ## Supported Input Types
 
 * [HydraSDR](https://hydrasdr.com/) (recommended for wideband scanning)
-* [RTL-SDR](http://sdr.osmocom.org/trac/wiki/rtl-sdr) (optional)
-* [SoapySDR](https://github.com/pothosware/SoapySDR/wiki) (optional)
 * Files: CU8, CS16, CF32 I/Q data, U16 AM data (built-in)
 * rtl_tcp remote data servers (built-in)
 
@@ -14,14 +12,14 @@ hydrasdr_433 is a fork of rtl_433 with native HydraSDR support and wideband scan
 
 * CMake 3.16 or later (CMake 4.0+ required for VS2026)
 * C99 compiler (GCC, Clang, or MSVC)
-* HydraSDR library v1.1.0 (local build required)
-* Optional: librtlsdr, SoapySDR libraries
+* HydraSDR library v1.1.0+ (auto-fetched from GitHub, or local build)
 
 ## HydraSDR Library
 
-HydraSDR v1.1.0 must be built locally before building hydrasdr_433. The library path is specified with `-DHYDRASDR_DIR`.
+By default, CMake automatically fetches and builds the HydraSDR library from GitHub via FetchContent. No manual setup is needed.
 
-Example path structure (using `hydrasdr-host`):
+To use a local build instead, pass `-DHYDRASDR_DIR=/path/to/hydrasdr-host`:
+
 ```
 C:\hydrasdr-host
 ├── build_mingw64/          # MinGW64 build
@@ -50,8 +48,7 @@ pacman -S mingw-w64-x86_64-toolchain mingw-w64-x86_64-cmake \
 # Clone and build
 git clone https://github.com/hydrasdr/hydrasdr_433.git
 cd hydrasdr_433
-cmake -B build_mingw64 -G Ninja \
-    -DHYDRASDR_DIR="C:/hydrasdr-host"
+cmake -B build_mingw64 -G Ninja
 ninja -C build_mingw64
 
 # Run tests
@@ -79,8 +76,7 @@ Uses MSVC compiler. Best performance, recommended for release builds.
 git clone https://github.com/hydrasdr/hydrasdr_433.git
 cd hydrasdr_433
 cmake -B build_vs2022 -G "Visual Studio 17 2022" -A x64 ^
-    -DENABLE_OPENSSL=OFF ^
-    -DHYDRASDR_DIR=C:/hydrasdr-host
+    -DENABLE_OPENSSL=OFF
 cmake --build build_vs2022 --config Release
 
 :: Run tests
@@ -106,8 +102,7 @@ Uses MSVC 19.50 compiler. Requires CMake 4.0+ (the version bundled with MSYS2/Mi
 git clone https://github.com/hydrasdr/hydrasdr_433.git
 cd hydrasdr_433
 cmake -B build_vs2026 -G "Visual Studio 18 2026" -A x64 ^
-    -DENABLE_OPENSSL=OFF ^
-    -DHYDRASDR_DIR=C:/hydrasdr-host
+    -DENABLE_OPENSSL=OFF
 cmake --build build_vs2026 --config Release
 
 :: Run tests
@@ -132,14 +127,12 @@ If using MSYS2 terminal for VS builds, disable OpenSSL to avoid MinGW header con
 ```bash
 # VS2022
 /d/msys64/mingw64/bin/cmake -B build_vs2022 -G "Visual Studio 17 2022" -A x64 \
-    -DENABLE_OPENSSL=OFF \
-    -DHYDRASDR_DIR="C:/hydrasdr-host"
+    -DENABLE_OPENSSL=OFF
 /d/msys64/mingw64/bin/cmake --build build_vs2022 --config Release
 
 # VS2026 (requires cmake 4.0+)
 /d/msys64/mingw64/bin/cmake -B build_vs2026 -G "Visual Studio 18 2026" -A x64 \
-    -DENABLE_OPENSSL=OFF \
-    -DHYDRASDR_DIR="C:/hydrasdr-host"
+    -DENABLE_OPENSSL=OFF
 /d/msys64/mingw64/bin/cmake --build build_vs2026 --config Release
 ```
 
@@ -148,7 +141,7 @@ If using MSYS2 terminal for VS builds, disable OpenSSL to avoid MinGW header con
 ```bash
 git clone https://github.com/hydrasdr/hydrasdr_433.git
 cd hydrasdr_433
-cmake -B build -GNinja -DHYDRASDR_DIR=/path/to/hydrasdr-host
+cmake -B build -GNinja
 cmake --build build
 ```
 
@@ -156,10 +149,10 @@ cmake --build build
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `HYDRASDR_DIR` | - | **Required.** Path to HydraSDR library source/build |
-| `ENABLE_RTLSDR` | OFF | Enable RTL-SDR support |
-| `ENABLE_SOAPYSDR` | OFF | Enable SoapySDR support |
+| `HYDRASDR_DIR` | (auto-fetch) | Path to local HydraSDR library (overrides auto-fetch) |
+| `HYDRASDR_FETCH_FROM_GIT` | ON | Fetch HydraSDR from GitHub if not found locally |
 | `ENABLE_OPENSSL` | ON | Enable TLS support (MQTT, InfluxDB) |
+| `ENABLE_NATIVE_OPTIMIZATIONS` | OFF | Use `-march=native` (non-portable) |
 | `BUILD_TESTING` | ON | Build test suite |
 
 ## Static Runtime Configuration
@@ -222,13 +215,15 @@ tests\Release\resampler-test.exe
 
 ### Performance Comparison
 
-| Test | MinGW64 (GCC 15) | VS2022 (MSVC 19.14) | VS2026 (MSVC 19.50) |
-|------|------------------|---------------------|---------------------|
-| FFT N=8 | 26 ns/call | 28 ns/call | 26 ns/call |
-| FFT N=16 | 60 ns/call | 71 ns/call | 62 ns/call |
-| Channelizer 4-ch | 34.7 MSps | 28.4 MSps | 30.6 MSps |
-| Channelizer 8-ch | 42.2 MSps | 31.0 MSps | 33.9 MSps |
-| Channelizer 16-ch | 43.6 MSps | 29.4 MSps | 33.0 MSps |
+Tested on AMD Ryzen 9 7950X3D (Zen 4, AVX-512).
+
+| Test | MinGW64 (GCC 15.2) | VS2022 (MSVC 19.42) | VS2026 (MSVC 19.50) |
+|------|---------------------|----------------------|----------------------|
+| FFT N=8 | 28 ns/call | 27 ns/call | 24 ns/call |
+| FFT N=16 | 59 ns/call | 71 ns/call | 59 ns/call |
+| Channelizer 4-ch | 73.1 MSps | 71.9 MSps | 31.5 MSps |
+| Channelizer 8-ch | 81.9 MSps | 70.6 MSps | 35.3 MSps |
+| Channelizer 16-ch | 85.3 MSps | 68.3 MSps | 33.2 MSps |
 
 ## Platform-Specific Dependencies
 
@@ -236,19 +231,19 @@ tests\Release\resampler-test.exe
 
 ```bash
 sudo apt-get install build-essential cmake ninja-build pkg-config \
-    libtool libusb-1.0-0-dev librtlsdr-dev rtl-sdr libssl-dev
+    libtool libusb-1.0-0-dev libssl-dev
 ```
 
 ### Fedora/RHEL
 
 ```bash
-sudo dnf install cmake ninja-build gcc rtl-sdr-devel libusb1-devel openssl-devel
+sudo dnf install cmake ninja-build gcc libusb1-devel openssl-devel
 ```
 
 ### macOS (Homebrew)
 
 ```bash
-brew install cmake ninja rtl-sdr pkg-config openssl libusb
+brew install cmake ninja pkg-config openssl libusb
 ```
 
 ### Windows (MSYS2)
@@ -262,12 +257,12 @@ pacman -S mingw-w64-x86_64-toolchain mingw-w64-x86_64-cmake \
 
 ### HydraSDR Not Found
 
-Ensure `HYDRASDR_DIR` points to the hydrasdr-host directory containing:
+By default, HydraSDR is fetched automatically from GitHub. If the fetch fails (e.g., no internet), you can use a local build by passing `-DHYDRASDR_DIR=/path/to/hydrasdr-host`.
+
+When using a local build, ensure the directory contains:
 - `libhydrasdr/src/hydrasdr.h` (header)
 - `build_mingw64/libhydrasdr/src/libhydrasdr.dll.a` (MinGW)
 - `build_VS2022/libhydrasdr/src/Release/hydrasdr.lib` (VS2022/VS2026)
-
-Example: `C:/hydrasdr-host`
 
 ### VS2022/VS2026 Build Links Against MinGW Library
 
@@ -276,13 +271,11 @@ The FindHydraSDR module automatically selects the correct library based on compi
 ```cmd
 :: VS2022
 del build_vs2022\CMakeCache.txt
-cmake -B build_vs2022 -G "Visual Studio 17 2022" -A x64 -DENABLE_OPENSSL=OFF ^
-    -DHYDRASDR_DIR=C:/hydrasdr-host
+cmake -B build_vs2022 -G "Visual Studio 17 2022" -A x64 -DENABLE_OPENSSL=OFF
 
 :: VS2026
 del build_vs2026\CMakeCache.txt
-cmake -B build_vs2026 -G "Visual Studio 18 2026" -A x64 -DENABLE_OPENSSL=OFF ^
-    -DHYDRASDR_DIR=C:/hydrasdr-host
+cmake -B build_vs2026 -G "Visual Studio 18 2026" -A x64 -DENABLE_OPENSSL=OFF
 ```
 
 ### Missing DLLs at Runtime
@@ -292,26 +285,16 @@ All builds copy DLLs automatically. If DLLs are missing, reconfigure with a clea
 ```bash
 # MinGW64
 rm build_mingw64/CMakeCache.txt
-cmake -B build_mingw64 -G Ninja \
-    -DHYDRASDR_DIR="C:/hydrasdr-host"
+cmake -B build_mingw64 -G Ninja
 
 # VS2022
 del build_vs2022\CMakeCache.txt
-cmake -B build_vs2022 -G "Visual Studio 17 2022" -A x64 \
-    -DENABLE_OPENSSL=OFF \
-    -DHYDRASDR_DIR=C:/hydrasdr-host
+cmake -B build_vs2022 -G "Visual Studio 17 2022" -A x64 -DENABLE_OPENSSL=OFF
 
 # VS2026
 del build_vs2026\CMakeCache.txt
-cmake -B build_vs2026 -G "Visual Studio 18 2026" -A x64 \
-    -DENABLE_OPENSSL=OFF \
-    -DHYDRASDR_DIR=C:/hydrasdr-host
+cmake -B build_vs2026 -G "Visual Studio 18 2026" -A x64 -DENABLE_OPENSSL=OFF
 ```
-
-### SoapySDR Version Mismatch
-
-If you experience trouble with SoapySDR, you may have mixed 0.7 and 0.8 headers/libs.
-Purge all SoapySDR packages and install only from packages (0.7) or source (0.8).
 
 ## Contributing
 

@@ -22,7 +22,7 @@ There are multiple layers. Look up [ASK](https://en.wikipedia.org/wiki/Amplitude
 
 Only if there is no [AGC](https://en.wikipedia.org/wiki/Automatic_gain_control) or the current AGC value is reported (not with rtl-sdr).
 
-> What is the meaning of the information I capture with rtl_433? It would be nice to know the meaning of each line or the different parts it shows?
+> What is the meaning of the information I capture with hydrasdr_433? It would be nice to know the meaning of each line or the different parts it shows?
 
 It's the decoded transmission and some meta-data about the signal.
 
@@ -50,7 +50,7 @@ There are specialized chips like the [EV1527](https://www.sunrom.com/get/206000)
 
 868 is also interesting. Mostly FSK is used, where 433 mostly uses OOK (ASK).
 
-> I would like to send a doorbell button push to MQTT. rtl_433 doesn't decode it, but it's a simple button, so I only need a trigger event. With rtl_433 -a -R 0 I am able to catch the button with {25}... code. What is the correct way to send the raw data to MQTT?
+> I would like to send a doorbell button push to MQTT. hydrasdr_433 doesn't decode it, but it's a simple button, so I only need a trigger event. With hydrasdr_433 -a -R 0 I am able to catch the button with {25}... code. What is the correct way to send the raw data to MQTT?
 
 Use `-A` and note the `-X` line. Then use that to write a flex decoder. See e.g. [EV1527-PIR-Sgooway.conf](https://github.com/merbanan/rtl_433/blob/master/conf/EV1527-PIR-Sgooway.conf).
 

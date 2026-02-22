@@ -1,6 +1,6 @@
 # Contributing guidelines
 
-The rtl_433 project is built on the work of many contributors analyzing,
+The hydrasdr_433 project (fork of rtl_433) is built on the work of many contributors analyzing,
 documenting, and coding device support.
 We are happy to accept your contribution of yet another sensor!
 
@@ -81,10 +81,10 @@ The signals will be stored individually in files named g**NNN**\_**FFF**M\_**RRR
 | **FFF** | frequency
 | **RRR** | sample rate
 
-This file can be played back with `rtl_433 -r gNNN_FFFM_RRRk.cu8`.
+This file can be played back with `hydrasdr_433 -r gNNN_FFFM_RRRk.cu8`.
 
 These files are vital for understanding the signal format as well as the message data.  Use the analyzer
-with `-A` to look at the recorded signal and determine the pulse characteristics, e.g. `rtl_433 -r gNNN_FFFM_RRRk.cu8 -A`.
+with `-A` to look at the recorded signal and determine the pulse characteristics, e.g. `hydrasdr_433 -r gNNN_FFFM_RRRk.cu8 -A`.
 
 Make sure you have recorded a proper set of test signals representing different conditions together
 with any and all information about the values that the signal should represent. For example, make a
@@ -100,7 +100,7 @@ https://github.com/merbanan/rtl_433_tests
 Please don't open a new github issue for device support or request decoding help from others
 until you've added test signals and the description to the repository.
 
-The rtl_433_test repository is also used to help test that changes to rtl_433 haven't caused any regressions.
+The rtl_433_test repository is also used to help test that changes to hydrasdr_433 haven't caused any regressions.
 
 ## Code style
 

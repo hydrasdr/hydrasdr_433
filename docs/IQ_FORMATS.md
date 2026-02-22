@@ -11,7 +11,7 @@ A sample consists of an I and Q value, each commonly of 8, 12, or 16-bit. This i
 The data can be processed similar to a two-channel audio signal, although at a much higher sample rate.
 
 ::: tip
-Common sample rates with RTL-SDR receivers are 250 kHz and 1024 kHz, also 1 MHz (1000 kHz).
+Common sample rates are 250 kHz and 1024 kHz, also 1 MHz (1000 kHz).
 :::
 
 The nature of an I/Q sample allows to use a bandwidth equal to the sample rate
@@ -42,13 +42,14 @@ Also used but rarely supported are audio files containing I/Q data:
 - `.wav`
 - `.bwf`:  Broadcast Wave Format
 
-The "native" format for RTL-SDR receivers is `.cu8`, for other receivers likely `.cs16`.
+The native format for HydraSDR is `.cf32` (complex float32).
+For file compatibility, `.cu8` and `.cs16` are also supported.
 Most receivers only sample with 12-bit per channel, using `.cs12` will be more compact although not as widely supported.
 
-The rtl_433 program supports most of these formats and allows to read, write, or convert them, e.g.:
+The hydrasdr_433 program supports most of these formats and allows to read, write, or convert them, e.g.:
 
-- `rtl_433 -w FILE.cu8`: write received data to sample file
-- `rtl_433 -w FILE.cu8 FILE.cs16`: convert sample file
+- `hydrasdr_433 -w FILE.cf32`: write received data to sample file
+- `hydrasdr_433 -w FILE.cu8 FILE.cs16`: convert sample file
 
 ## Pulse data formats
 
@@ -72,10 +73,10 @@ The SigRok `.sr` format is a Zip and combines multiple files for easy viewing wi
 Install SigRok Pulseview and write a SigRok file. The overwrite option (uppercase `-W`) will automatically open Pulseview.
 :::
 
-The rtl_433 program can create all these formats from live data or sample files, e.g.:
+The hydrasdr_433 program can create all these formats from live data or sample files, e.g.:
 
-- `rtl_433 -w FILE.ook`: write received data to ook file
-- `rtl_433 -w FILE.ook FILE.cu8`: convert sample file to ook file
+- `hydrasdr_433 -w FILE.ook`: write received data to ook file
+- `hydrasdr_433 -w FILE.ook FILE.cu8`: convert sample file to ook file
 
 ## File name meta data
 

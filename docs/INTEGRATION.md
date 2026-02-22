@@ -1,6 +1,6 @@
 # Integration
 
-Integration of rtl_433 output into various home automation gateways.
+Integration of hydrasdr_433 output into various home automation gateways.
 
 ::: tip
 If you are a user of one these systems, please help to confirm and extend the information here.
@@ -16,7 +16,7 @@ Some help comes from https://community.openhab.org/t/rtl-433-to-mqtt/80652/3
 
 Run
 
-    rtl_433 -F "mqtt://192.168.178.42:1883,retain=0,devices=sensors/rtl_433/P[protocol]/C[channel]"
+    hydrasdr_433 -F "mqtt://192.168.178.42:1883,retain=0,devices=sensors/rtl_433/P[protocol]/C[channel]"
 
 This produces some topics in the broker like this:
 
@@ -51,11 +51,11 @@ You can easily set up some MQTT things then:
 
 [Home Assistant](https://www.home-assistant.io/) - Open source home automation
 
-Home Assistant has good MQTT support and can read rtl_433 event topics.
+Home Assistant has good MQTT support and can read hydrasdr_433 event topics.
 
-Assuming rtl_433 is started with
+Assuming hydrasdr_433 is started with
 
-    rtl_433 -C si -M time:unix:usec:utc -F mqtt
+    hydrasdr_433 -C si -M time:unix:usec:utc -F mqtt
 
 you can set up temperature and humidity sensors in Home Assistant with
 
@@ -99,7 +99,7 @@ MQTT Home Assistant auto discovery.
 
 [Domoticz](http://www.domoticz.com/) - Home Automation System
 
-Domoticz has built-in support for reading from rtl_433 using pipes.
+Domoticz has built-in support for reading from hydrasdr_433 using pipes.
 
 There is also a newer plugin using MQTT: [enesbcs/pyrtl433](https://github.com/enesbcs/pyrtl433).
 
@@ -111,7 +111,7 @@ Testing and example needed
 
 [NodeRED](https://nodered.org/) - Flow-based programming for the Internet of Things
 
-Node RED has built-in support for reading from MQTT and thus rtl_433 events.
+Node RED has built-in support for reading from MQTT and thus hydrasdr_433 events.
 
 ::: warning
 Example needed
@@ -119,20 +119,20 @@ Example needed
 
 ## Databases
 
-You likely need to filter and transform rtl_433's output before sending it to a database.
+You likely need to filter and transform hydrasdr_433's output before sending it to a database.
 It's recommended you read the JSON data and process it to your specific requirements.
 
-Some example pipes/relays for rtl_433 JSON data. Should work with Python 2 and also Python 3.
+Some example pipes/relays for JSON data. Should work with Python 2 and also Python 3.
 
-The `pipe` examples read JSON output from `rtl_433` using a pipe, i.e.
+The `pipe` examples read JSON output from `hydrasdr_433` using a pipe, i.e.
 
-    rtl_433 -F json ... | rtl_433_statsd_pipe.py
+    hydrasdr_433 -F json ... | rtl_433_statsd_pipe.py
 
-The `relay` examples consumes the (UDP) Syslog output from rtl_433 (or a legacy plain JSON datagram).
-Basically run `rtl_433` with `-F syslog:127.0.0.1:1433` and the relay script as an unrelated process, i.e.
+The `relay` examples consumes the (UDP) Syslog output from hydrasdr_433 (or a legacy plain JSON datagram).
+Basically run `hydrasdr_433` with `-F syslog:127.0.0.1:1433` and the relay script as an unrelated process, i.e.
 
     rtl_433_mqtt_relay.py &
-    rtl_433 -F syslog:127.0.0.1:1433
+    hydrasdr_433 -F syslog:127.0.0.1:1433
 
 ### SQL
 
@@ -162,11 +162,11 @@ There is built-in support for an InfluxDB output.
 
 Specify an InfluxDB 2.0 server with e.g.
 
-    rtl_433 -F "influx://localhost:9999/api/v2/write?org=<org>&bucket=<bucket>,token=<authtoken>"
+    hydrasdr_433 -F "influx://localhost:9999/api/v2/write?org=<org>&bucket=<bucket>,token=<authtoken>"
 
 Specify an InfluxDB 1.x server with e.g.
 
-    rtl_433 -F "influx://localhost:8086/write?db=<db>&p=<password>&u=<user>"
+    hydrasdr_433 -F "influx://localhost:8086/write?db=<db>&p=<password>&u=<user>"
 
 It is recommended to additionally use the option `-M time:unix:usec:utc` for correct timestamps in InfluxDB.
 
