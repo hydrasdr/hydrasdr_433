@@ -549,6 +549,19 @@ static int init_wideband_channel_state(struct dm_state *demod, int num_channels,
     if (!demod->wb_dedup)
         goto fail;
 
+    /* Per-channel decode counters and frequency map */
+    demod->wb_decode_count = calloc((size_t)num_channels, sizeof(unsigned));
+    if (!demod->wb_decode_count)
+        goto fail;
+    demod->wb_channel_freqs = calloc((size_t)num_channels, sizeof(float));
+    if (!demod->wb_channel_freqs)
+        goto fail;
+
+    /* Per-channel smoothed power for spectrum display */
+    demod->wb_smoothed_power = calloc((size_t)num_channels, sizeof(float));
+    if (!demod->wb_smoothed_power)
+        goto fail;
+
     /* Initialize per-channel levels from global defaults */
     for (int i = 0; i < num_channels; i++) {
         demod->wb_min_level_auto[i] = demod->min_level;
@@ -632,6 +645,12 @@ static void process_wideband_channels(r_cfg_t *cfg, struct dm_state *demod,
         }
         print_logf(LOG_NOTICE, "Wideband", "Per-channel decoder rate: %u Hz (2x oversampled, no resampling)",
                    target_rate);
+
+        /* Fill per-channel frequency map */
+        if (demod->wb_channel_freqs) {
+            for (int c = 0; c < ch->num_channels; c++)
+                demod->wb_channel_freqs[c] = channelizer_get_channel_freq(ch, c);
+        }
     }
 
     /* Run the channelizer: split wideband input into narrowband channels */
@@ -707,6 +726,15 @@ static void process_wideband_channels(r_cfg_t *cfg, struct dm_state *demod,
 
         /* AM demodulation (magnitude estimation for CF32 data) */
         float avg_db = magnitude_est_cf32(chan_iq, chan_temp, resampled_samples);
+
+        /* Update smoothed power for spectrum display */
+        if (demod->wb_smoothed_power) {
+            if (demod->wb_smoothed_power[chan] == 0.0f)
+                demod->wb_smoothed_power[chan] = avg_db;
+            else
+                demod->wb_smoothed_power[chan] =
+                    demod->wb_smoothed_power[chan] * 0.9f + avg_db * 0.1f;
+        }
 
         /* Per-channel noise level tracking (like single-freq mode) */
         /* Defensive check: ensure per-channel state arrays are valid */
@@ -889,6 +917,10 @@ static void process_wideband_channels(r_cfg_t *cfg, struct dm_state *demod,
                 }
             }
 
+            /* Track per-channel decode counts */
+            if (p_events > 0 && demod->wb_decode_count)
+                demod->wb_decode_count[chan] += p_events;
+
             /* Handle successful events */
             if (p_events > 0) {
                 demod->frame_event_count += p_events;
@@ -952,8 +984,57 @@ static void free_wideband_channel_state(struct dm_state *demod)
     demod->wb_temp_bufs = NULL;
     wb_dedup_free(demod->wb_dedup);
     demod->wb_dedup = NULL;
+    free(demod->wb_decode_count);
+    demod->wb_decode_count = NULL;
+    free(demod->wb_channel_freqs);
+    demod->wb_channel_freqs = NULL;
+    free(demod->wb_smoothed_power);
+    demod->wb_smoothed_power = NULL;
     demod->wb_buf_len = 0;
     demod->wideband_channels_allocated = 0;
+}
+
+/**
+ * Print a text-mode spectrum overview of per-channel power levels.
+ * Triggered by -M noise in wideband mode.
+ */
+static void print_wideband_spectrum(r_cfg_t *cfg)
+{
+    struct dm_state *demod = cfg->demod;
+    int nch = demod->wideband_channels_allocated;
+
+    if (!demod->wb_smoothed_power || !demod->wb_channel_freqs || nch <= 0)
+        return;
+
+    /* Find min/max power for bar scaling */
+    float pmin = demod->wb_smoothed_power[0];
+    float pmax = pmin;
+    for (int c = 1; c < nch; c++) {
+        float p = demod->wb_smoothed_power[c];
+        if (p < pmin) pmin = p;
+        if (p > pmax) pmax = p;
+    }
+    float range = pmax - pmin;
+    if (range < 1.0f) range = 1.0f;
+
+    print_logf(LOG_NOTICE, "Wideband", "--- Spectrum (%d channels) ---", nch);
+    for (int c = 0; c < nch; c++) {
+        float power = demod->wb_smoothed_power[c];
+        float noise = demod->wb_noise_level ? demod->wb_noise_level[c] : 0.0f;
+        int bar_len = (int)((power - pmin) / range * 40.0f + 0.5f);
+        if (bar_len < 0) bar_len = 0;
+        if (bar_len > 40) bar_len = 40;
+
+        char bar[41];
+        for (int i = 0; i < bar_len; i++)
+            bar[i] = '#';
+        bar[bar_len] = '\0';
+
+        print_logf(LOG_NOTICE, "Wideband",
+                   "Ch%2d %7.3f MHz %6.1f dB [N:%6.1f] |%s",
+                   c, demod->wb_channel_freqs[c] / 1e6f,
+                   power, noise, bar);
+    }
 }
 
 static void sdr_callback(unsigned char *iq_buf, uint32_t len, void *ctx)
@@ -1007,6 +1088,11 @@ static void sdr_callback(unsigned char *iq_buf, uint32_t len, void *ctx)
 
     /* Wideband mode: route samples through PFB channelizer */
     if (cfg->wideband_mode && cfg->channelizer) {
+        /* Record raw wideband IQ if enabled */
+        if (cfg->wb_record_file) {
+            fwrite(iq_buf, 1, len, cfg->wb_record_file);
+        }
+
         if (demod->sample_size == SDR_SAMPLE_SIZE_CF32) {
             /* Verify float alignment (CF32 buffers from SDR must be 4-byte aligned) */
             if ((uintptr_t)iq_buf % sizeof(float) != 0) {
@@ -1018,6 +1104,14 @@ static void sdr_callback(unsigned char *iq_buf, uint32_t len, void *ctx)
             print_log(LOG_ERROR, "Wideband", "Wideband mode requires CF32 samples (HydraSDR)");
             cfg->wideband_mode = 0;
         }
+
+        /* Wideband spectrum report (reuse -M noise interval) */
+        if (cfg->report_noise
+                && last_frame_sec != demod->now.tv_sec
+                && demod->now.tv_sec % cfg->report_noise == 0) {
+            print_wideband_spectrum(cfg);
+        }
+
         return;  /* Wideband processing handles everything, skip normal path */
     }
 
@@ -1990,12 +2084,21 @@ static void parse_conf_option(r_cfg_t *cfg, int opt, char *arg)
         break;
     case 'B':
         if (!arg) {
-            fprintf(stderr, "Wideband option requires argument: -B <center>:<bandwidth>[:<channels>]\n");
+            fprintf(stderr, "Wideband option requires argument:\n");
+            fprintf(stderr, "  -B <center>:<bandwidth>[:<channels>]  Wideband scanning\n");
+            fprintf(stderr, "  -B record:<filename>                  Record wideband IQ to CF32 file\n");
             fprintf(stderr, "  Use when ISM band wider than single-freq capture:\n");
             fprintf(stderr, "    433: band=1.74M > 250k -> -B 433.92M:2M:8  (wideband needed)\n");
             fprintf(stderr, "    868: band=600k  < 1M   -> -f 868.5M        (single-freq OK)\n");
             fprintf(stderr, "    915: band=26M   > 1M   -> -B 915M:8M:16    (wideband needed)\n");
             usage(1);
+        }
+        if (strncmp(arg, "record:", 7) == 0) {
+            free(cfg->wb_record_filename);
+            cfg->wb_record_filename = strdup(arg + 7);
+            if (!cfg->wb_record_filename)
+                FATAL_CALLOC("wb_record_filename");
+            break;
         }
         if (parse_wideband_spec(arg, &cfg->wideband_center, &cfg->wideband_bandwidth,
                                 &cfg->wideband_channels) == 0) {
@@ -2354,6 +2457,17 @@ int main(int argc, char **argv) {
             FATAL_CALLOC("channelizer");
         }
         /* Channelizer will be initialized later when we know the actual sample rate from SDR */
+
+        /* Open wideband IQ recording file if requested */
+        if (cfg->wb_record_filename) {
+            cfg->wb_record_file = fopen(cfg->wb_record_filename, "wb");
+            if (!cfg->wb_record_file)
+                print_logf(LOG_ERROR, "Wideband",
+                           "Cannot open recording: %s", cfg->wb_record_filename);
+            else
+                print_logf(LOG_NOTICE, "Wideband",
+                           "Recording wideband IQ to: %s", cfg->wb_record_filename);
+        }
     }
 
     // apply hop defaults and set first frequency

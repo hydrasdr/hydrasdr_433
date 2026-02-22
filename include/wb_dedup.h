@@ -28,4 +28,7 @@ void wb_dedup_free(wb_dedup_t *dedup);
  *  chan_freq_hz is the channel center frequency. */
 int wb_dedup_check(wb_dedup_t *dedup, data_t *data, float chan_freq_hz);
 
+/** Return total number of suppressed duplicates since creation. */
+unsigned wb_dedup_suppressed_count(wb_dedup_t *dedup);
+
 #endif /* INCLUDE_WB_DEDUP_H_ */

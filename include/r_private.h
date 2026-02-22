@@ -85,6 +85,9 @@ struct dm_state {
     uint16_t *wb_temp_bufs;                                 ///< Per-channel temp/magnitude buffers [ch * wb_buf_len]
     size_t wb_buf_len;                                      ///< Per-channel buffer length (samples)
     wb_dedup_t *wb_dedup;                                   ///< Wideband cross-channel deduplication
+    unsigned *wb_decode_count;                               ///< Per-channel successful decode count [num_channels]
+    float *wb_channel_freqs;                                 ///< Per-channel center frequencies (Hz) [num_channels]
+    float *wb_smoothed_power;                                ///< Per-channel smoothed power (dB) [num_channels]
 };
 
 #endif /* INCLUDE_R_PRIVATE_H_ */

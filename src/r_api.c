@@ -270,6 +270,12 @@ void r_free_cfg(r_cfg_t *cfg)
     free(cfg->demod->wb_temp_bufs);
     cfg->demod->wb_temp_bufs = NULL;
     cfg->demod->wb_buf_len = 0;
+    free(cfg->demod->wb_decode_count);
+    cfg->demod->wb_decode_count = NULL;
+    free(cfg->demod->wb_channel_freqs);
+    cfg->demod->wb_channel_freqs = NULL;
+    free(cfg->demod->wb_smoothed_power);
+    cfg->demod->wb_smoothed_power = NULL;
 
     list_free_elems(&cfg->raw_handler, (list_elem_free_fn)raw_output_free);
 
@@ -297,6 +303,14 @@ void r_free_cfg(r_cfg_t *cfg)
         free(cfg->channelizer);
         cfg->channelizer = NULL;
     }
+
+    /* Free wideband IQ recording */
+    if (cfg->wb_record_file) {
+        fclose(cfg->wb_record_file);
+        cfg->wb_record_file = NULL;
+    }
+    free(cfg->wb_record_filename);
+    cfg->wb_record_filename = NULL;
 
     //free(cfg);
 }
@@ -993,6 +1007,34 @@ data_t *create_report_data(r_cfg_t *cfg, int level)
             NULL);
 
     list_free_elems(&dev_data_list, NULL);
+
+    /* Append wideband per-channel stats when in wideband mode */
+    if (cfg->wideband_mode && cfg->demod->wb_channel_freqs) {
+        int nch = cfg->demod->wideband_channels_allocated;
+        list_t ch_list = {0};
+        list_ensure_size(&ch_list, nch);
+        for (int c = 0; c < nch; c++) {
+            data_t *ch_data = data_make(
+                    "channel",  "", DATA_INT,    c,
+                    "freq_MHz", "", DATA_DOUBLE,
+                        (double)(cfg->demod->wb_channel_freqs[c] / 1e6f),
+                    "noise_dB", "", DATA_DOUBLE,
+                        (double)cfg->demod->wb_noise_level[c],
+                    "decodes",  "", DATA_INT,
+                        (int)cfg->demod->wb_decode_count[c],
+                    NULL);
+            list_push(&ch_list, ch_data);
+        }
+        data_t *wb = data_make(
+                "dedup_suppressed", "", DATA_INT,
+                    (int)wb_dedup_suppressed_count(cfg->demod->wb_dedup),
+                "channels",         "", DATA_ARRAY,
+                    data_array(ch_list.len, DATA_DATA, ch_list.elems),
+                NULL);
+        data = data_dat(data, "wb_stats", "", NULL, wb);
+        list_free_elems(&ch_list, NULL);
+    }
+
     return data;
 }
 
@@ -1016,6 +1058,12 @@ void flush_report_data(r_cfg_t *cfg)
         r_dev->decode_fails[2] = 0;
         r_dev->decode_fails[3] = 0;
         r_dev->decode_fails[4] = 0;
+    }
+
+    /* Reset per-channel wideband decode counts */
+    if (cfg->demod->wb_decode_count) {
+        for (int c = 0; c < cfg->demod->wideband_channels_allocated; c++)
+            cfg->demod->wb_decode_count[c] = 0;
     }
 }
 

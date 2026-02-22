@@ -41,6 +41,7 @@ struct wb_dedup {
     struct wb_dedup_entry cache[WB_DEDUP_CACHE_SIZE];
     int head;   /* next write position */
     int count;  /* entries in use (up to WB_DEDUP_CACHE_SIZE) */
+    unsigned suppressed_count;  /* total suppressed duplicates */
 };
 
 static int64_t get_timestamp_us(void)
@@ -153,6 +154,7 @@ int wb_dedup_check(wb_dedup_t *dedup, data_t *data, float chan_freq_hz)
         /* Hash match within window */
         if (fabsf(chan_freq_hz - e->freq) > MIN_FREQ_DIFF) {
             /* Different channel — cross-channel duplicate: suppress */
+            dedup->suppressed_count++;
             return 1;
         }
         /* Same channel — normal retransmission: allow */
@@ -169,4 +171,11 @@ int wb_dedup_check(wb_dedup_t *dedup, data_t *data, float chan_freq_hz)
         dedup->count++;
 
     return 0;
+}
+
+unsigned wb_dedup_suppressed_count(wb_dedup_t *dedup)
+{
+    if (!dedup)
+        return 0;
+    return dedup->suppressed_count;
 }
