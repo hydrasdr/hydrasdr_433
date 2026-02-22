@@ -309,6 +309,14 @@ if(NOT HydraSDR_FOUND)
             # Get include directory from the fetched source
             set(HydraSDR_INCLUDE_DIRS ${hydrasdr_host_SOURCE_DIR}/libhydrasdr/src)
             include_directories(${HydraSDR_INCLUDE_DIRS})
+            # Fix symbol visibility on non-Windows: upstream generate_export_header()
+            # sets C_VISIBILITY_PRESET=hidden, but hydrasdr.h only uses
+            # __declspec(dllexport) on Windows — ADDAPI is empty on Linux/macOS,
+            # so all symbols end up hidden in the .so. Override to default.
+            if(NOT WIN32)
+                set_target_properties(hydrasdr PROPERTIES C_VISIBILITY_PRESET default)
+                set_target_properties(hydrasdr PROPERTIES VISIBILITY_INLINES_HIDDEN OFF)
+            endif()
             # Link against the hydrasdr target directly
             list(APPEND SDR_LIBRARIES hydrasdr)
             ADD_DEFINITIONS(-DHYDRASDR)
