@@ -38,7 +38,7 @@ struct sdr_dev;
 struct r_device;
 struct mg_mgr;
 
-typedef struct channelizer channelizer_t;
+struct channelizer;
 
 typedef enum {
     CONVERT_NATIVE,
@@ -149,7 +149,7 @@ typedef struct r_cfg {
     float wideband_bandwidth;           ///< Total bandwidth to scan (Hz)
     float wideband_spacing;             ///< Channel spacing (Hz), 0 = auto
     int wideband_channels;              ///< Number of channels (computed from bandwidth/spacing)
-    channelizer_t *channelizer;         ///< PFB channelizer instance
+    struct channelizer *channelizer;    ///< PFB channelizer instance
     FILE *wb_record_file;               ///< Wideband IQ recording file handle
     char *wb_record_filename;           ///< Wideband IQ recording filename
 } r_cfg_t;

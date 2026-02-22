@@ -262,7 +262,6 @@ static void characterize_filter(int num_channels, uint32_t sample_rate)
 
 		float p0 = compute_power(channel_out[0], out_samples);
 		float p1 = compute_power(channel_out[1], out_samples);
-		float total = p0 + p1;
 
 		const char *note = "";
 		if (pct == 0) note = "<-- Ch0 center";

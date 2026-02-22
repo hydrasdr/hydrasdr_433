@@ -193,4 +193,16 @@ const char *channelizer_build_info(void);
  */
 const char *channelizer_isa_info(void);
 
+/* ISA-dispatched process functions (compiled in separate translation units) */
+int channelizer_process_sse2(channelizer_t *ch, const float *input,
+    int n_samples, float **channel_out, int *out_samples);
+int channelizer_process_avx2(channelizer_t *ch, const float *input,
+    int n_samples, float **channel_out, int *out_samples);
+int channelizer_process_avx512(channelizer_t *ch, const float *input,
+    int n_samples, float **channel_out, int *out_samples);
+int channelizer_process_neon(channelizer_t *ch, const float *input,
+    int n_samples, float **channel_out, int *out_samples);
+int channelizer_process_sve(channelizer_t *ch, const float *input,
+    int n_samples, float **channel_out, int *out_samples);
+
 #endif /* INCLUDE_CHANNELIZER_H_ */

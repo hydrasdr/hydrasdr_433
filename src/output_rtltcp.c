@@ -384,7 +384,7 @@ static THREAD_RETURN THREAD_CALL accept_thread(void *arg)
 /* Disable GCC analyzer false positives for Windows socket code.
    The analyzer doesn't understand that INVALID_SOCKET is the only failure
    value on Windows (where SOCKET is an unsigned type). */
-#if defined(__GNUC__) && !defined(__clang__)
+#if defined(__GNUC__) && !defined(__clang__) && __GNUC__ >= 10
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wanalyzer-fd-leak"
 #pragma GCC diagnostic ignored "-Wanalyzer-fd-use-without-check"
@@ -468,7 +468,7 @@ static int rtltcp_server_start(rtltcp_server_t *srv, char const *host, char cons
     return r;
 }
 
-#if defined(__GNUC__) && !defined(__clang__)
+#if defined(__GNUC__) && !defined(__clang__) && __GNUC__ >= 10
 #pragma GCC diagnostic pop
 #endif
 

@@ -139,37 +139,6 @@ static float estimate_frequency(const float *buf, int n_samples, float sample_ra
 	return avg_phase_diff * sample_rate / (2.0f * (float)M_PI);
 }
 
-/**
- * Compute cross-correlation peak between two signals to check similarity.
- * Returns normalized correlation (0 to 1).
- */
-static float compute_correlation(const float *sig1, const float *sig2, int n_samples)
-{
-	float sum_prod = 0.0f;
-	float sum_sq1 = 0.0f;
-	float sum_sq2 = 0.0f;
-
-	for (int i = 0; i < n_samples; i++) {
-		float I1 = sig1[i * 2 + 0];
-		float Q1 = sig1[i * 2 + 1];
-		float I2 = sig2[i * 2 + 0];
-		float Q2 = sig2[i * 2 + 1];
-
-		/* Magnitude correlation */
-		float mag1 = sqrtf(I1 * I1 + Q1 * Q1);
-		float mag2 = sqrtf(I2 * I2 + Q2 * Q2);
-
-		sum_prod += mag1 * mag2;
-		sum_sq1 += mag1 * mag1;
-		sum_sq2 += mag2 * mag2;
-	}
-
-	if (sum_sq1 < 1e-10f || sum_sq2 < 1e-10f)
-		return 0.0f;
-
-	return sum_prod / sqrtf(sum_sq1 * sum_sq2);
-}
-
 /*===========================================================================
  * Test Cases
  *===========================================================================*/

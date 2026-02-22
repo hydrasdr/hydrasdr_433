@@ -91,7 +91,7 @@ jobs:
           fi
           cp .deploy/WINDOWS-MINGWW64.txt dist/README.txt
           mkdir -p dist/conf
-          cp conf/hydrasdr_433.example.conf dist/conf/
+          [ -f conf/hydrasdr_433.example.conf ] && cp conf/hydrasdr_433.example.conf dist/conf/ || true
           ls -la dist/
       - uses: actions/upload-artifact@v4
         with:
@@ -109,7 +109,7 @@ jobs:
         include:
           - os: macos-14
             arch: ARM64
-          - os: macos-13
+          - os: macos-15-intel
             arch: x86_64
     runs-on: ${{ matrix.os }}
     name: macOS ${{ matrix.arch }}
@@ -131,7 +131,7 @@ jobs:
           cp build/src/hydrasdr_433 dist/
           find build -name 'libhydrasdr*.dylib' -exec cp {} dist/ \; 2>/dev/null || true
           mkdir -p dist/conf
-          cp conf/hydrasdr_433.example.conf dist/conf/
+          [ -f conf/hydrasdr_433.example.conf ] && cp conf/hydrasdr_433.example.conf dist/conf/ || true
           ls -la dist/
       - uses: actions/upload-artifact@v4
         with:
@@ -185,7 +185,7 @@ jobs:
           mkdir -p pkg/usr/bin pkg/usr/lib pkg/etc/hydrasdr_433
           cp build/src/hydrasdr_433 pkg/usr/bin/
           find build -name 'libhydrasdr.so*' -exec cp {} pkg/usr/lib/ \; 2>/dev/null || true
-          cp conf/hydrasdr_433.example.conf pkg/etc/hydrasdr_433/
+          [ -f conf/hydrasdr_433.example.conf ] && cp conf/hydrasdr_433.example.conf pkg/etc/hydrasdr_433/ || true
           fpm -s dir -t deb -n hydrasdr-433 -v "${VERSION}" -C pkg \
             -d 'libusb-1.0-0' -d 'libssl3 | libssl1.1' \
             --architecture amd64 \
@@ -247,7 +247,7 @@ jobs:
           mkdir -p pkg/usr/bin pkg/usr/lib pkg/etc/hydrasdr_433
           cp build/src/hydrasdr_433 pkg/usr/bin/
           find build -name 'libhydrasdr.so*' -exec cp {} pkg/usr/lib/ \; 2>/dev/null || true
-          cp conf/hydrasdr_433.example.conf pkg/etc/hydrasdr_433/
+          [ -f conf/hydrasdr_433.example.conf ] && cp conf/hydrasdr_433.example.conf pkg/etc/hydrasdr_433/ || true
           fpm -s dir -t deb -n hydrasdr-433 -v "${VERSION}" -C pkg \
             -d 'libusb-1.0-0' -d 'libssl3 | libssl1.1' \
             --architecture amd64 \
@@ -302,7 +302,7 @@ jobs:
           mkdir -p pkg/usr/bin pkg/usr/lib pkg/etc/hydrasdr_433
           cp build/src/hydrasdr_433 pkg/usr/bin/
           find build -name 'libhydrasdr.so*' -exec cp {} pkg/usr/lib/ \; 2>/dev/null || true
-          cp conf/hydrasdr_433.example.conf pkg/etc/hydrasdr_433/
+          [ -f conf/hydrasdr_433.example.conf ] && cp conf/hydrasdr_433.example.conf pkg/etc/hydrasdr_433/ || true
           fpm -s dir -t deb -n hydrasdr-433 -v "${VERSION}" -C pkg \
             -d 'libusb-1.0-0' -d 'libssl3 | libssl1.1' \
             --architecture amd64 \
@@ -361,7 +361,7 @@ jobs:
           mkdir -p pkg/usr/bin pkg/usr/lib64 pkg/etc/hydrasdr_433
           cp build/src/hydrasdr_433 pkg/usr/bin/
           find build -name 'libhydrasdr.so*' -exec cp {} pkg/usr/lib64/ \; 2>/dev/null || true
-          cp conf/hydrasdr_433.example.conf pkg/etc/hydrasdr_433/
+          [ -f conf/hydrasdr_433.example.conf ] && cp conf/hydrasdr_433.example.conf pkg/etc/hydrasdr_433/ || true
           fpm -s dir -t rpm -n hydrasdr-433 -v "${VERSION}" -C pkg \
             -d 'libusb1' -d 'openssl-libs' \
             --architecture x86_64 \
@@ -388,6 +388,7 @@ jobs:
         run: |
           dnf -y update
           dnf -y install epel-release
+          /usr/bin/crb enable
           dnf -y install \
             git cmake ninja-build gcc gcc-c++ make pkg-config \
             libusbx-devel openssl-devel \
@@ -411,7 +412,7 @@ jobs:
           mkdir -p pkg/usr/bin pkg/usr/lib64 pkg/etc/hydrasdr_433
           cp build/src/hydrasdr_433 pkg/usr/bin/
           find build -name 'libhydrasdr.so*' -exec cp {} pkg/usr/lib64/ \; 2>/dev/null || true
-          cp conf/hydrasdr_433.example.conf pkg/etc/hydrasdr_433/
+          [ -f conf/hydrasdr_433.example.conf ] && cp conf/hydrasdr_433.example.conf pkg/etc/hydrasdr_433/ || true
           fpm -s dir -t rpm -n hydrasdr-433 -v "${VERSION}" -C pkg \
             -d 'libusbx' -d 'openssl-libs' \
             --architecture x86_64 \
@@ -460,7 +461,7 @@ jobs:
           mkdir -p pkg/usr/bin pkg/usr/lib64 pkg/etc/hydrasdr_433
           cp build/src/hydrasdr_433 pkg/usr/bin/
           find build -name 'libhydrasdr.so*' -exec cp {} pkg/usr/lib64/ \; 2>/dev/null || true
-          cp conf/hydrasdr_433.example.conf pkg/etc/hydrasdr_433/
+          [ -f conf/hydrasdr_433.example.conf ] && cp conf/hydrasdr_433.example.conf pkg/etc/hydrasdr_433/ || true
           fpm -s dir -t rpm -n hydrasdr-433 -v "${VERSION}" -C pkg \
             -d 'libusb-1_0-0' -d 'libopenssl1_1' \
             --architecture x86_64 \
@@ -509,7 +510,7 @@ jobs:
           mkdir -p pkg/usr/bin pkg/usr/lib pkg/etc/hydrasdr_433
           cp build/src/hydrasdr_433 pkg/usr/bin/
           find build -name 'libhydrasdr.so*' -exec cp {} pkg/usr/lib/ \; 2>/dev/null || true
-          cp conf/hydrasdr_433.example.conf pkg/etc/hydrasdr_433/
+          [ -f conf/hydrasdr_433.example.conf ] && cp conf/hydrasdr_433.example.conf pkg/etc/hydrasdr_433/ || true
           fpm -s dir -t pacman -n hydrasdr-433 -v "${VERSION}" -C pkg \
             -d 'libusb' -d 'openssl' \
             --architecture x86_64 \
@@ -546,6 +547,8 @@ jobs:
             gcc-aarch64-linux-gnu g++-aarch64-linux-gnu \
             libusb-1.0-0-dev:arm64 libssl-dev:arm64
       - name: Configure
+        env:
+          PKG_CONFIG_LIBDIR: /usr/lib/aarch64-linux-gnu/pkgconfig:/usr/share/pkgconfig
         run: |
           cmake \
             -DCMAKE_TOOLCHAIN_FILE="${PWD}/cmake/Toolchain-aarch64-linux-gnu.cmake" \
@@ -561,7 +564,7 @@ jobs:
           mkdir -p dist/conf
           cp build/src/hydrasdr_433 dist/
           find build -name 'libhydrasdr.so*' -exec cp {} dist/ \; 2>/dev/null || true
-          cp conf/hydrasdr_433.example.conf dist/conf/
+          [ -f conf/hydrasdr_433.example.conf ] && cp conf/hydrasdr_433.example.conf dist/conf/ || true
           ls -la dist/
       - uses: actions/upload-artifact@v4
         with:

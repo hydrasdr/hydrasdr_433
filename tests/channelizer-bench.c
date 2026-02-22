@@ -156,16 +156,6 @@ static void generate_tone(float *buf, int n_samples, float freq_offset,
 	}
 }
 
-static void generate_tone_with_phase(float *buf, int n_samples, float freq_offset,
-                                     float sample_rate, float amplitude, float init_phase)
-{
-	for (int i = 0; i < n_samples; i++) {
-		float phase = init_phase + 2.0f * (float)M_PI * freq_offset * (float)i / sample_rate;
-		buf[i * 2 + 0] = amplitude * cosf(phase);
-		buf[i * 2 + 1] = amplitude * sinf(phase);
-	}
-}
-
 static void add_tone(float *buf, int n_samples, float freq_offset,
                      float sample_rate, float amplitude)
 {
@@ -194,25 +184,6 @@ static float power_to_db(float power)
 	if (power < POWER_FLOOR)
 		return DB_FLOOR;
 	return 10.0f * log10f(power);
-}
-
-/* Compute average phase of a complex signal (relative to a reference tone) */
-static float compute_avg_phase(const float *buf, int n_samples, float freq_offset,
-                               float sample_rate, int start_sample)
-{
-	float sum_re = 0.0f, sum_im = 0.0f;
-	for (int i = 0; i < n_samples; i++) {
-		/* Demodulate by mixing with -freq_offset */
-		float phase = -2.0f * (float)M_PI * freq_offset * (float)(i + start_sample) / sample_rate;
-		float cos_p = cosf(phase);
-		float sin_p = sinf(phase);
-		float I = buf[i * 2 + 0];
-		float Q = buf[i * 2 + 1];
-		/* Complex multiply */
-		sum_re += I * cos_p - Q * sin_p;
-		sum_im += I * sin_p + Q * cos_p;
-	}
-	return atan2f(sum_im, sum_re);
 }
 
 static double get_time_sec(void)
@@ -335,7 +306,7 @@ static int test_dc_routing(int num_channels, uint32_t sample_rate)
 	TEST_ASSERT(ret == 0, "processing failed");
 	TEST_ASSERT(out_samples > 0, "no output");
 
-	float powers[CHANNELIZER_MAX_CHANNELS];
+	float powers[CHANNELIZER_MAX_CHANNELS] = {0};
 	float total_power = 0.0f;
 	for (int i = 0; i < num_channels; i++) {
 		powers[i] = compute_power(channel_out[i], out_samples);
@@ -388,7 +359,7 @@ static int test_channel_routing(int num_channels, uint32_t sample_rate)
 		ret = channelizer_process(&ch, input, n_input, channel_out, &out_samples);
 		TEST_ASSERT(ret == 0, "processing failed");
 
-		float powers[CHANNELIZER_MAX_CHANNELS];
+		float powers[CHANNELIZER_MAX_CHANNELS] = {0};
 		int max_ch = 0;
 		for (int i = 0; i < num_channels; i++) {
 			powers[i] = compute_power(channel_out[i], out_samples);
@@ -431,7 +402,7 @@ static int test_channel_isolation(int num_channels, uint32_t sample_rate)
 	ret = channelizer_process(&ch, input, n_input, channel_out, &out_samples);
 	TEST_ASSERT(ret == 0, "processing failed");
 
-	float powers[CHANNELIZER_MAX_CHANNELS];
+	float powers[CHANNELIZER_MAX_CHANNELS] = {0};
 	for (int i = 0; i < num_channels; i++)
 		powers[i] = compute_power(channel_out[i], out_samples);
 
@@ -477,7 +448,7 @@ static int test_multitone(int num_channels, uint32_t sample_rate)
 	ret = channelizer_process(&ch, input, n_input, channel_out, &out_samples);
 	TEST_ASSERT(ret == 0, "processing failed");
 
-	float powers[CHANNELIZER_MAX_CHANNELS];
+	float powers[CHANNELIZER_MAX_CHANNELS] = {0};
 	for (int i = 0; i < num_channels; i++)
 		powers[i] = compute_power(channel_out[i], out_samples);
 
@@ -671,7 +642,7 @@ static int test_negative_frequencies(int num_channels, uint32_t sample_rate)
 	ret = channelizer_process(&ch, input, n_input, channel_out, &out_samples);
 	TEST_ASSERT(ret == 0, "processing failed");
 
-	float powers[CHANNELIZER_MAX_CHANNELS];
+	float powers[CHANNELIZER_MAX_CHANNELS] = {0};
 	int max_ch = 0;
 	for (int i = 0; i < num_channels; i++) {
 		powers[i] = compute_power(channel_out[i], out_samples);
@@ -716,7 +687,7 @@ static int test_nyquist_channel(int num_channels, uint32_t sample_rate)
 	ret = channelizer_process(&ch, input, n_input, channel_out, &out_samples);
 	TEST_ASSERT(ret == 0, "processing failed");
 
-	float powers[CHANNELIZER_MAX_CHANNELS];
+	float powers[CHANNELIZER_MAX_CHANNELS] = {0};
 	int max_ch = 0;
 	for (int i = 0; i < num_channels; i++) {
 		powers[i] = compute_power(channel_out[i], out_samples);

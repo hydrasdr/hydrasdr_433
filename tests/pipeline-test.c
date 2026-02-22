@@ -313,10 +313,6 @@ static int test_pipeline_with_resampler(void)
 		cf32_resampler_free(&res);
 		return 1;
 	}
-	memset(input, 0, PIPELINE_INPUT_SAMPLES * 2 * sizeof(float));
-	generate_tone(input, PIPELINE_INPUT_SAMPLES, 0.0f, (float)PIPELINE_SAMPLE_RATE, 1.0f);
-	channelizer_process(&ch, input, PIPELINE_INPUT_SAMPLES, channel_out, &out_samples);
-	float ref_db = compute_power_db(channel_out[0], out_samples);
 	channelizer_free(&ch);
 
 	printf("  %-40s | Chan dB | Resamp dB | Atten  | Note\n", "Signal");

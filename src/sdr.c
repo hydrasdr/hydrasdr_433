@@ -122,7 +122,7 @@ struct rtl_tcp_info {
 /* Disable GCC analyzer false positives for Windows socket code.
    The analyzer doesn't understand that INVALID_SOCKET is the only failure
    value on Windows (where SOCKET is an unsigned type). */
-#if defined(__GNUC__) && !defined(__clang__)
+#if defined(__GNUC__) && !defined(__clang__) && __GNUC__ >= 10
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wanalyzer-fd-leak"
 #pragma GCC diagnostic ignored "-Wanalyzer-fd-use-without-check"
@@ -232,7 +232,7 @@ static int rtltcp_open(sdr_dev_t **out_dev, char const *dev_query, int verbose)
     return 0;
 }
 
-#if defined(__GNUC__) && !defined(__clang__)
+#if defined(__GNUC__) && !defined(__clang__) && __GNUC__ >= 10
 #pragma GCC diagnostic pop
 #endif
 
@@ -882,8 +882,8 @@ static int sdr_open_hydrasdr(sdr_dev_t **out_dev, char const *dev_query, int ver
     hydrasdr_show_device_info(ctx, verbose);
 
     /* Build device info JSON string */
-    const char *board_name = ctx->info.board_name ? ctx->info.board_name : "unknown";
-    const char *firmware_ver = ctx->info.firmware_version ? ctx->info.firmware_version : "unknown";
+    const char *board_name = ctx->info.board_name[0] ? ctx->info.board_name : "unknown";
+    const char *firmware_ver = ctx->info.firmware_version[0] ? ctx->info.firmware_version : "unknown";
     size_t info_len = 256 + strlen(board_name) + strlen(firmware_ver);
     dev->dev_info = malloc(info_len);
     if (!dev->dev_info) {
@@ -1168,7 +1168,7 @@ static int sdr_apply_settings_hydrasdr(sdr_dev_t *dev, char const *sdr_settings,
 }
 
 /* Buffer is stored in hctx->buffer and freed by sdr_close_hydrasdr(). */
-#if defined(__GNUC__) && !defined(__clang__)
+#if defined(__GNUC__) && !defined(__clang__) && __GNUC__ >= 10
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wanalyzer-malloc-leak"
 #endif
@@ -1211,7 +1211,7 @@ static int sdr_start_hydrasdr(sdr_dev_t *dev, sdr_event_cb_t cb, void *ctx, uint
 
     return 0;
 }
-#if defined(__GNUC__) && !defined(__clang__)
+#if defined(__GNUC__) && !defined(__clang__) && __GNUC__ >= 10
 #pragma GCC diagnostic pop
 #endif
 

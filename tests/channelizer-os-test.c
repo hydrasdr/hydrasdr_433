@@ -1186,15 +1186,6 @@ static int test_multi_block_continuity(void)
 	channelizer_process(&ch, input, total_samples, channel_out, &out_samples);
 	int single_out = out_samples;
 
-	/* Save last few samples of single-block output for channel 0 */
-	float single_tail[8];
-	int tail_start = single_out - 4;
-	for (int i = 0; i < 4; i++) {
-		single_tail[i * 2 + 0] = channel_out[0][(tail_start + i) * 2 + 0];
-		single_tail[i * 2 + 1] = channel_out[0][(tail_start + i) * 2 + 1];
-	}
-	float single_power = compute_power(channel_out[0], single_out);
-
 	channelizer_free(&ch);
 
 	/* Process as two blocks */

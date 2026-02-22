@@ -282,11 +282,34 @@ if(NOT HydraSDR_FOUND)
 
         # Configure HydraSDR build options
         set(BUILD_SHARED_LIBS ON CACHE BOOL "Build shared libraries" FORCE)
-        set(BUILD_HYDRASDR_TOOLS OFF CACHE BOOL "Build HydraSDR tools" FORCE)
 
-        FetchContent_MakeAvailable(hydrasdr_host)
+        # Populate only — do NOT use FetchContent_MakeAvailable() because
+        # the upstream CMakeLists.txt unconditionally builds hydrasdr-tools
+        # (which we don't need and which fails to link).
+        if(POLICY CMP0169)
+            cmake_policy(SET CMP0169 OLD)
+        endif()
+        FetchContent_Populate(hydrasdr_host)
 
-        # After FetchContent, the library target 'hydrasdr' should be available
+        # Patch upstream to skip hydrasdr-tools
+        file(READ "${hydrasdr_host_SOURCE_DIR}/CMakeLists.txt" _upstream_cmake)
+        string(REPLACE "add_subdirectory(hydrasdr-tools)"
+                       "# add_subdirectory(hydrasdr-tools)  # skipped by hydrasdr_433"
+                       _upstream_cmake "${_upstream_cmake}")
+        file(WRITE "${hydrasdr_host_SOURCE_DIR}/CMakeLists.txt" "${_upstream_cmake}")
+
+        if(MSVC)
+            # MSVC: use full upstream CMakeLists.txt (handles libusb download + pthreads4w)
+            add_subdirectory(${hydrasdr_host_SOURCE_DIR} ${hydrasdr_host_BINARY_DIR})
+        else()
+            # MinGW/Linux: only need the library, skip MSVC-specific deps
+            add_subdirectory(
+                ${hydrasdr_host_SOURCE_DIR}/libhydrasdr
+                ${hydrasdr_host_BINARY_DIR}/libhydrasdr
+            )
+        endif()
+
+        # After add_subdirectory, the library target 'hydrasdr' should be available
         if(TARGET hydrasdr)
             message(STATUS "HydraSDR fetched and building as subproject")
             # Get include directory from the fetched source

@@ -175,18 +175,6 @@ static void design_kaiser_filter(float *h, int h_len, float fc, float As)
  * 0 = not started, 1 = in progress, 2 = done, -1 = failed */
 static atomic_init_t hlfft_init_state = ATOMIC_INIT_VAL;
 
-/* ISA-dispatched process functions (compiled in separate translation units) */
-extern int channelizer_process_sse2(channelizer_t *ch, const float *input,
-    int n_samples, float **channel_out, int *out_samples);
-extern int channelizer_process_avx2(channelizer_t *ch, const float *input,
-    int n_samples, float **channel_out, int *out_samples);
-extern int channelizer_process_avx512(channelizer_t *ch, const float *input,
-    int n_samples, float **channel_out, int *out_samples);
-extern int channelizer_process_neon(channelizer_t *ch, const float *input,
-    int n_samples, float **channel_out, int *out_samples);
-extern int channelizer_process_sve(channelizer_t *ch, const float *input,
-    int n_samples, float **channel_out, int *out_samples);
-
 typedef int (*channelizer_process_fn_t)(channelizer_t *, const float *, int,
                                         float **, int *);
 
@@ -390,14 +378,14 @@ int channelizer_init(channelizer_t *ch, int num_channels,
              * Spin-wait until state transitions from 1 (in-progress).
              * GCC analyzer false-positive: it cannot see that another
              * thread will store a different value via atomic CAS above. */
-#if defined(__GNUC__) && !defined(__clang__)
+#if defined(__GNUC__) && !defined(__clang__) && __GNUC__ >= 14
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wanalyzer-infinite-loop"
 #endif
             while (atomic_init_load(&hlfft_init_state) == 1) {
                 /* Spin-wait for init to complete */
             }
-#if defined(__GNUC__) && !defined(__clang__)
+#if defined(__GNUC__) && !defined(__clang__) && __GNUC__ >= 14
 #pragma GCC diagnostic pop
 #endif
             if (atomic_init_load(&hlfft_init_state) != 2) {
