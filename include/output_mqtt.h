@@ -1,5 +1,5 @@
 /** @file
-    MQTT output for rtl_433 events
+    MQTT output for hydrasdr_433 events
 
     Copyright (C) 2019 Christian Zuckschwerdt
 

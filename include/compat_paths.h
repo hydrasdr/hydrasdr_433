@@ -9,7 +9,7 @@
 #ifndef INCLUDE_COMPAT_PATHS_H_
 #define INCLUDE_COMPAT_PATHS_H_
 
-/// Get default search paths for rtl_433 config file.
+/// Get default search paths for hydrasdr_433 config file.
 char **compat_get_default_conf_paths(void);
 
 #endif  /* INCLUDE_COMPAT_PATHS_H_ */

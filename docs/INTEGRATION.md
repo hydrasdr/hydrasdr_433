@@ -16,15 +16,15 @@ Some help comes from https://community.openhab.org/t/rtl-433-to-mqtt/80652/3
 
 Run
 
-    hydrasdr_433 -F "mqtt://192.168.178.42:1883,retain=0,devices=sensors/rtl_433/P[protocol]/C[channel]"
+    hydrasdr_433 -F "mqtt://192.168.178.42:1883,retain=0,devices=sensors/hydrasdr_433/P[protocol]/C[channel]"
 
 This produces some topics in the broker like this:
 
-    sensors/rtl_433/P25/C1/id 147
-    sensors/rtl_433/P25/C1/temperature_C 33.200001
-    sensors/rtl_433/P25/C1/rain_mm 107.699997
-    sensors/rtl_433/P25/C1/battery_ok 1
-    sensors/rtl_433/P25/C1/mic CRC
+    sensors/hydrasdr_433/P25/C1/id 147
+    sensors/hydrasdr_433/P25/C1/temperature_C 33.200001
+    sensors/hydrasdr_433/P25/C1/rain_mm 107.699997
+    sensors/hydrasdr_433/P25/C1/battery_ok 1
+    sensors/hydrasdr_433/P25/C1/mic CRC
 
 You can easily set up some MQTT things then:
 
@@ -41,9 +41,9 @@ You can easily set up some MQTT things then:
     {
         Thing topic RTL_433 "433MHz Empfänger" @ "RTL433"  {
           Channels:
-              Type number : temp "Temperatur" [ stateTopic="sensors/rtl_433/P25/C1/temperature_C" ]
-              Type number : hum  "Luftfeuchtigkeit" [ stateTopic="sensors/rtl_433/P25/C1/humidity" ]
-              Type switch : batt "Battery schwach" [ stateTopic="sensors/rtl_433/P25/C1/battery", transformationPattern="MAP:battery.map"]
+              Type number : temp "Temperatur" [ stateTopic="sensors/hydrasdr_433/P25/C1/temperature_C" ]
+              Type number : hum  "Luftfeuchtigkeit" [ stateTopic="sensors/hydrasdr_433/P25/C1/humidity" ]
+              Type switch : batt "Battery schwach" [ stateTopic="sensors/hydrasdr_433/P25/C1/battery", transformationPattern="MAP:battery.map"]
         }
     }
 
@@ -62,7 +62,7 @@ you can set up temperature and humidity sensors in Home Assistant with
     sensor:
 
       - name: temperature_raw
-        state_topic: "rtl_433/host/devices/Prologue-TH/5/3/+/temperature_C"
+        state_topic: "hydrasdr_433/host/devices/Prologue-TH/5/3/+/temperature_C"
         platform: mqtt
         device_class: temperature
         unit_of_measurement: "°C"
@@ -70,7 +70,7 @@ you can set up temperature and humidity sensors in Home Assistant with
         expire_after: 610
 
       - name: humidity_raw
-        state_topic: "rtl_433/host/devices/Prologue-TH/5/3/+/humidity"
+        state_topic: "hydrasdr_433/host/devices/Prologue-TH/5/3/+/humidity"
         platform: mqtt
         device_class: humidity
         unit_of_measurement: "%"

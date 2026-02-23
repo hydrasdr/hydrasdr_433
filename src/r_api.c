@@ -542,7 +542,7 @@ char const **determine_csv_fields(r_cfg_t *cfg, char const *const *well_known, i
         if (r_dev->fields)
             list_push_all(&field_list, (void **)r_dev->fields);
         else
-            fprintf(stderr, "rtl_433: warning: %u \"%s\" does not support CSV output\n",
+            fprintf(stderr, "hydrasdr_433: warning: %u \"%s\" does not support CSV output\n",
                     r_dev->protocol_num, r_dev->name);
     }
     convert_csv_fields(cfg, (char const **)field_list.elems);
@@ -1123,7 +1123,7 @@ static FILE *fopen_output(char const *param)
     }
     FILE *file = fopen(param, "a");
     if (!file) {
-        fprintf(stderr, "rtl_433: failed to open output file\n");
+        fprintf(stderr, "hydrasdr_433: failed to open output file\n");
         exit(1);
     }
     return file;

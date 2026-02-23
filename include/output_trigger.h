@@ -1,5 +1,5 @@
 /** @file
-    Trigger output for rtl_433 events.
+    Trigger output for hydrasdr_433 events.
 
     Copyright (C) 2021 Christian Zuckschwerdt
 
@@ -23,7 +23,7 @@
 ///
 ///     $ sudo chmod a+w /sys/class/leds/led0/shot
 ///     $ echo oneshot | sudo tee /sys/class/leds/led0/trigger
-///     $ rtl_433 ... -F trigger:/sys/class/leds/led0/shot
+///     $ hydrasdr_433 ... -F trigger:/sys/class/leds/led0/shot
 ///
 /// @param file a trigger output stream
 /// @return The initialized data output.

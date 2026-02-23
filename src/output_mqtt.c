@@ -1,5 +1,5 @@
 /** @file
-    MQTT output for rtl_433 events
+    MQTT output for hydrasdr_433 events
 
     Copyright (C) 2019 Christian Zuckschwerdt
 
@@ -551,13 +551,13 @@ struct data_output *data_output_mqtt_create(struct mg_mgr *mgr, char *param, cha
     uint16_t host_crc = crc16((uint8_t *)mqtt->hostname, strlen(mqtt->hostname), 0x1021, 0xffff);
     uint16_t devq_crc = crc16((uint8_t *)dev_hint, dev_hint ? strlen(dev_hint) : 0, 0x1021, 0xffff);
     uint16_t parm_crc = crc16((uint8_t *)param, param ? strlen(param) : 0, 0x1021, 0xffff);
-    char client_id[21];
+    char client_id[22];
     /// MQTT 3.1.1 specifies that the broker MUST accept clients id's between 1 and 23 characters
-    snprintf(client_id, sizeof(client_id), "rtl_433-%04x%04x%04x", host_crc, devq_crc, parm_crc);
+    snprintf(client_id, sizeof(client_id), "hydrasdr-%04x%04x%04x", host_crc, devq_crc, parm_crc);
 
     // default base topic
-    char default_base_topic[8 + sizeof(mqtt->hostname)];
-    snprintf(default_base_topic, sizeof(default_base_topic), "rtl_433/%s", mqtt->hostname);
+    char default_base_topic[14 + sizeof(mqtt->hostname)];
+    snprintf(default_base_topic, sizeof(default_base_topic), "hydrasdr_433/%s", mqtt->hostname);
     char const *base_topic = default_base_topic;
 
     // default topics
@@ -609,10 +609,10 @@ struct data_output *data_output_mqtt_create(struct mg_mgr *mgr, char *param, cha
         // deprecated, remove this
         else if (!strcasecmp(key, "c") || !strcasecmp(key, "usechannel")) {
             print_log(LOG_FATAL, "MQTT", "\"usechannel=...\" has been removed. Use a topic format string:");
-            print_log(LOG_FATAL, "MQTT", "for \"afterid\"   use e.g. \"devices=rtl_433/[hostname]/devices[/type][/model][/subtype][/id][/channel]\"");
-            print_log(LOG_FATAL, "MQTT", "for \"beforeid\"  use e.g. \"devices=rtl_433/[hostname]/devices[/type][/model][/subtype][/channel][/id]\"");
-            print_log(LOG_FATAL, "MQTT", "for \"replaceid\" use e.g. \"devices=rtl_433/[hostname]/devices[/type][/model][/subtype][/channel]\"");
-            print_log(LOG_FATAL, "MQTT", "for \"no\"        use e.g. \"devices=rtl_433/[hostname]/devices[/type][/model][/subtype][/id]\"");
+            print_log(LOG_FATAL, "MQTT", "for \"afterid\"   use e.g. \"devices=hydrasdr_433/[hostname]/devices[/type][/model][/subtype][/id][/channel]\"");
+            print_log(LOG_FATAL, "MQTT", "for \"beforeid\"  use e.g. \"devices=hydrasdr_433/[hostname]/devices[/type][/model][/subtype][/channel][/id]\"");
+            print_log(LOG_FATAL, "MQTT", "for \"replaceid\" use e.g. \"devices=hydrasdr_433/[hostname]/devices[/type][/model][/subtype][/channel]\"");
+            print_log(LOG_FATAL, "MQTT", "for \"no\"        use e.g. \"devices=hydrasdr_433/[hostname]/devices[/type][/model][/subtype][/id]\"");
             exit(1);
         }
         // JSON events to single topic

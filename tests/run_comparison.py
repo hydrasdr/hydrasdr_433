@@ -118,7 +118,7 @@ def compare_json(expected, actual):
 
 def main():
     parser = argparse.ArgumentParser(description='Compare hydrasdr_433 vs rtl_433 reference JSON')
-    parser.add_argument('-c', '--rtl433-cmd', default="rtl_433",
+    parser.add_argument('-c', '--rtl433-cmd', default="hydrasdr_433",
                         help='Path to hydrasdr_433 executable')
     parser.add_argument('-C', '--config-path', default="../conf",
                         help='Config path')

@@ -1,5 +1,5 @@
 /** @file
-    InfluxDB output for rtl_433 events.
+    InfluxDB output for hydrasdr_433 events.
 
     Copyright (C) 2019 Daniel Krueger
     based on output_mqtt.c
@@ -344,7 +344,7 @@ static void R_API_CALLCONV print_influx_data(data_output_t *output, data_t *data
         // use hostname for measurement
 
         mbuf_reserve(buf, 20000);
-        mbuf_snprintf(buf, "rtl_433_%s", influx->hostname);
+        mbuf_snprintf(buf, "hydrasdr_433_%s", influx->hostname);
     }
     else {
         // use model for measurement

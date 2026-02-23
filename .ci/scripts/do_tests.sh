@@ -16,7 +16,7 @@ cd "${source_dir}/.."
 [ -e rtl_433_tests ] || git clone --depth 1 https://github.com/merbanan/rtl_433_tests.git
 cd rtl_433_tests
 export PATH="${source_dir}/build/src:$PATH"
-test -f "${source_dir}/build/src/rtl_433"
+test -f "${source_dir}/build/src/hydrasdr_433"
 
 # python3 -m venv .venv
 # source .venv/bin/activate

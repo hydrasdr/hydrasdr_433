@@ -1,5 +1,5 @@
 /** @file
-    Log outputs for rtl_433 events.
+    Log outputs for hydrasdr_433 events.
 
     Copyright (C) 2022 Christian Zuckschwerdt
 

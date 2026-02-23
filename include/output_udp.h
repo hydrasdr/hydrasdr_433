@@ -1,5 +1,5 @@
 /** @file
-    UDP syslog output for rtl_433 events.
+    UDP syslog output for hydrasdr_433 events.
 
     Copyright (C) 2021 Christian Zuckschwerdt
 

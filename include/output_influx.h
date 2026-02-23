@@ -1,5 +1,5 @@
 /** @file
-    InfluxDB output for rtl_433 events
+    InfluxDB output for hydrasdr_433 events
 
     Copyright (C) 2019 Daniel Krueger
     based on output_mqtt.c

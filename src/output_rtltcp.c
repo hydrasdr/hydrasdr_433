@@ -1,5 +1,5 @@
 /** @file
-    rtl_tcp output for rtl_433 raw data.
+    rtl_tcp output for hydrasdr_433 raw data.
 
     Copyright (C) 2022 Christian Zuckschwerdt
 

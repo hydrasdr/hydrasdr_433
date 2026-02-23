@@ -1,5 +1,5 @@
 /** @file
-    Trigger output for rtl_433 events.
+    Trigger output for hydrasdr_433 events.
 
     Copyright (C) 2021 Christian Zuckschwerdt
 

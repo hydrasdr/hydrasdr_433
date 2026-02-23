@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-"""rtl_433 maintainer updates to build files and docs."""
+"""hydrasdr_433 maintainer updates to build files and docs."""
 
 import sys
 import os
@@ -173,4 +173,4 @@ replace_block(r'## Protocols to enable \(command line option \"-R\"\)\n',
 # MAN pages
 repl = markup_man_text(repl + repl2)
 replace_block(r'\.\\" body',
-              r'\.\\" end', '\n'+repl, 'man/man1/rtl_433.1')
+              r'\.\\" end', '\n'+repl, 'man/man1/hydrasdr_433.1')

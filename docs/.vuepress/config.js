@@ -3,10 +3,10 @@ const { searchPlugin } = require('@vuepress/plugin-search')
 
 module.exports = {
   lang: 'en-US',
-  title: 'rtl_433',
-  description: 'generic data receiver for ISM/SRD bands.',
+  title: 'hydrasdr_433',
+  description: 'HydraSDR wideband data receiver for ISM/SRD bands.',
 
-  base: '/rtl_433/',
+  base: '/hydrasdr_433/',
   markdown: {
     code: {
       lineNumbers: false,
@@ -18,7 +18,7 @@ module.exports = {
   ],
 
   theme: defaultTheme({
-    repo: 'merbanan/rtl_433',
+    repo: 'hydrasdr/hydrasdr_433',
     displayAllHeaders: true,
 
     editLink: true,

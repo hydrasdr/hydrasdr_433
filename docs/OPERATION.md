@@ -420,7 +420,7 @@ Supported MQTT formats: (default is all formats)
 - `devices`: posts device and sensor info in nested topics
 
 The `<topic>` string will expand keys like `[/model]`, see below.
-E.g. `-F "mqtt://localhost:1883,user=USERNAME,pass=PASSWORD,retain=0,devices=rtl_433[/id]"`
+E.g. `-F "mqtt://localhost:1883,user=USERNAME,pass=PASSWORD,retain=0,devices=hydrasdr_433[/id]"`
 
 ### MQTT Format Strings
 
@@ -443,7 +443,7 @@ Examples:
 - `sensors[/channel:0]-[id:0]` : always have a combined channel and id
 - ...
 
-Defaults are a base topic of `rtl_433/<hostname>/` continued
+Defaults are a base topic of `hydrasdr_433/<hostname>/` continued
 - for `devices` with `devices[/type][/model][/subtype][/channel][/id]`
 - for `events` with `events`
 - for `states` with `states`
@@ -458,7 +458,7 @@ A UDP output of JSON messages with Syslog compatible header data.
 
 E.g. a UDP text payload of
 ```
-<165>1 2019-08-29T06:38:19Z raspi.fritz.box rtl_433 - - - {"time":"2019-08-29 08:38:19","model":"Nexus-TH","id":42,"channel":2,"battery_ok":1,"temperature_C":20.5,"humidity":83}
+<165>1 2019-08-29T06:38:19Z raspi.fritz.box hydrasdr_433 - - - {"time":"2019-08-29 08:38:19","model":"Nexus-TH","id":42,"channel":2,"battery_ok":1,"temperature_C":20.5,"humidity":83}
 ```
 See also [RFC 5424 - The Syslog Protocol](https://tools.ietf.org/html/rfc5424#page-8)
 

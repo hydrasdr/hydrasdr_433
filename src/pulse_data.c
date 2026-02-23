@@ -86,10 +86,10 @@ void pulse_data_print_vcd_header(FILE *file, uint32_t sample_rate)
     else
         timescale = "100 ns";
     chk_ret(fprintf(file, "$date %s $end\n", usecs_time_str(time_str, NULL, 0, 0)));
-    chk_ret(fprintf(file, "$version rtl_433 0.1.0 $end\n"));
+    chk_ret(fprintf(file, "$version hydrasdr_433 0.1.0 $end\n"));
     chk_ret(fprintf(file, "$comment Acquisition at %s Hz $end\n", nice_freq(sample_rate)));
     chk_ret(fprintf(file, "$timescale %s $end\n", timescale));
-    chk_ret(fprintf(file, "$scope module rtl_433 $end\n"));
+    chk_ret(fprintf(file, "$scope module hydrasdr_433 $end\n"));
     chk_ret(fprintf(file, "$var wire 1 / FRAME $end\n"));
     chk_ret(fprintf(file, "$var wire 1 ' AM $end\n"));
     chk_ret(fprintf(file, "$var wire 1 \" FM $end\n"));

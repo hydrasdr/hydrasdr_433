@@ -309,11 +309,11 @@ static void help_output(void)
             "\t  states: posts JSON state data, default \"<base>/states\"\n"
             "\t  devices: posts device and sensor info in nested topics,\n"
             "\t           default \"<base>/devices[/type][/model][/subtype][/channel][/id]\"\n"
-            "\tA base topic can be set with base=<topic>, default is \"rtl_433/HOSTNAME\".\n"
+            "\tA base topic can be set with base=<topic>, default is \"hydrasdr_433/HOSTNAME\".\n"
             "\tAny topic string overrides the base topic and will expand keys like [/model]\n"
-            "\tE.g. -F \"mqtt://localhost:1883,user=USERNAME,pass=PASSWORD,retain=0,devices=rtl_433[/id]\"\n"
+            "\tE.g. -F \"mqtt://localhost:1883,user=USERNAME,pass=PASSWORD,retain=0,devices=hydrasdr_433[/id]\"\n"
             "\tFor TLS use e.g. -F \"mqtts://host,tls_cert=<path>,tls_key=<path>,tls_ca_cert=<path>\"\n"
-            "\tWith MQTT each rtl_433 instance needs a distinct driver selection. The MQTT Client-ID is computed from the driver string.\n"
+            "\tWith MQTT each hydrasdr_433 instance needs a distinct driver selection. The MQTT Client-ID is computed from the driver string.\n"
             "\tIf you use multiple HydraSDR devices, perhaps set a serial and select by that (helps not to get the wrong antenna).\n"
             "  [-F influx[:[//]host[:port][/<path and options>]]\n"
             "\tSpecify InfluxDB 2.0 server with e.g. -F \"influx://localhost:9999/api/v2/write?org=<org>&bucket=<bucket>,token=<authtoken>\"\n"
@@ -2918,13 +2918,13 @@ int main(int argc, char **argv) {
         mg_mgr_poll(cfg->mgr, 500);
     }
     if (cfg->verbosity >= LOG_INFO)
-        print_log(LOG_INFO, "rtl_433", "stopping...");
+        print_log(LOG_INFO, "hydrasdr_433", "stopping...");
     // final polls to drain the broadcast
     //while (cfg->exit_async < 2) {
     //    mg_mgr_poll(cfg->mgr, 100);
     //}
     sdr_stop(cfg->dev);
-    //print_log(LOG_INFO, "rtl_433", "stopped.");
+    //print_log(LOG_INFO, "hydrasdr_433", "stopped.");
 
     if (cfg->report_stats > 0) {
         event_occurred_handler(cfg, create_report_data(cfg, cfg->report_stats));
@@ -2932,7 +2932,7 @@ int main(int argc, char **argv) {
     }
 
     if (!cfg->exit_async) {
-        print_logf(LOG_ERROR, "rtl_433", "Library error %d, exiting...", r);
+        print_logf(LOG_ERROR, "hydrasdr_433", "Library error %d, exiting...", r);
         cfg->exit_code = r;
     }
 

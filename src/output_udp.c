@@ -1,5 +1,5 @@
 /** @file
-    UDP syslog output for rtl_433 events.
+    UDP syslog output for hydrasdr_433 events.
 
     Copyright (C) 2021 Christian Zuckschwerdt
 
@@ -197,7 +197,7 @@ static void R_API_CALLCONV data_output_syslog_print(data_output_t *output, data_
     char timestamp[21];
     strftime(timestamp, 21, "%Y-%m-%dT%H:%M:%SZ", &tm_info);
 
-    abuf_printf(&msg, "<%d>1 %s %s rtl_433 - - - ", syslog->pri, timestamp, syslog->hostname);
+    abuf_printf(&msg, "<%d>1 %s %s hydrasdr_433 - - - ", syslog->pri, timestamp, syslog->hostname);
 
     msg.tail += data_print_jsons(data, msg.tail, msg.left);
     if (msg.tail >= msg.head + sizeof(message))
