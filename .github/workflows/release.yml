@@ -241,9 +241,7 @@ jobs:
           [ -f build/tests/channelizer-bench ] && build/tests/channelizer-bench || true
       - name: Package DEB
         run: |
-          export GEM_HOME=/opt/gems
-          export PATH="${GEM_HOME}/bin:$PATH"
-          gem install --no-document erb fpm
+          gem install --no-document --bindir /usr/local/bin erb fpm
           VERSION=${{ needs.prepare.outputs.version }}
           mkdir -p pkg/usr/bin pkg/usr/lib pkg/etc/hydrasdr_433
           cp build/src/hydrasdr_433 pkg/usr/bin/
@@ -357,9 +355,7 @@ jobs:
           [ -f build/tests/channelizer-bench ] && build/tests/channelizer-bench || true
       - name: Package RPM
         run: |
-          export GEM_HOME=/opt/gems
-          export PATH="${GEM_HOME}/bin:$PATH"
-          gem install --no-document erb fpm
+          gem install --no-document --bindir /usr/local/bin erb fpm
           VERSION=${{ needs.prepare.outputs.version }}
           mkdir -p pkg/usr/bin pkg/usr/lib64 pkg/etc/hydrasdr_433
           cp build/src/hydrasdr_433 pkg/usr/bin/
@@ -410,9 +406,7 @@ jobs:
           build/src/hydrasdr_433 -h || true
       - name: Package RPM
         run: |
-          export GEM_HOME=/opt/gems
-          export PATH="${GEM_HOME}/bin:$PATH"
-          gem install --no-document erb fpm
+          gem install --no-document --bindir /usr/local/bin erb fpm
           VERSION=${{ needs.prepare.outputs.version }}
           mkdir -p pkg/usr/bin pkg/usr/lib64 pkg/etc/hydrasdr_433
           cp build/src/hydrasdr_433 pkg/usr/bin/
@@ -461,9 +455,7 @@ jobs:
           build/src/hydrasdr_433 -h || true
       - name: Package RPM
         run: |
-          export GEM_HOME=/opt/gems
-          export PATH="${GEM_HOME}/bin:$PATH"
-          gem install --no-document erb fpm
+          gem install --no-document --bindir /usr/local/bin erb fpm
           VERSION=${{ needs.prepare.outputs.version }}
           mkdir -p pkg/usr/bin pkg/usr/lib64 pkg/etc/hydrasdr_433
           cp build/src/hydrasdr_433 pkg/usr/bin/
@@ -512,9 +504,7 @@ jobs:
           build/src/hydrasdr_433 -h || true
       - name: Package pkg.tar.zst
         run: |
-          export GEM_HOME=/opt/gems
-          export PATH="${GEM_HOME}/bin:$PATH"
-          gem install --no-document erb fpm
+          gem install --no-document --bindir /usr/local/bin erb fpm
           VERSION=${{ needs.prepare.outputs.version }}
           mkdir -p pkg/usr/bin pkg/usr/lib pkg/etc/hydrasdr_433
           cp build/src/hydrasdr_433 pkg/usr/bin/
