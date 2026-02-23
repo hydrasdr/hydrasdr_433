@@ -280,48 +280,45 @@ if(NOT HydraSDR_FOUND)
             GIT_SHALLOW    TRUE
         )
 
-        # Configure HydraSDR build options
-        set(BUILD_SHARED_LIBS ON CACHE BOOL "Build shared libraries" FORCE)
-
-        # Populate only — do NOT use FetchContent_MakeAvailable() because
-        # the upstream CMakeLists.txt unconditionally builds hydrasdr-tools
-        # (which we don't need and which fails to link).
-        if(POLICY CMP0169)
-            cmake_policy(SET CMP0169 OLD)
+        # Populate only (same pattern as kalibrate-hydrasdr)
+        FetchContent_GetProperties(hydrasdr_host)
+        if(NOT hydrasdr_host_POPULATED)
+            if(POLICY CMP0169)
+                cmake_policy(SET CMP0169 OLD)
+            endif()
+            FetchContent_Populate(hydrasdr_host)
         endif()
-        FetchContent_Populate(hydrasdr_host)
 
-        # Patch upstream to skip hydrasdr-tools
-        file(READ "${hydrasdr_host_SOURCE_DIR}/CMakeLists.txt" _upstream_cmake)
-        string(REPLACE "add_subdirectory(hydrasdr-tools)"
-                       "# add_subdirectory(hydrasdr-tools)  # skipped by hydrasdr_433"
-                       _upstream_cmake "${_upstream_cmake}")
-        file(WRITE "${hydrasdr_host_SOURCE_DIR}/CMakeLists.txt" "${_upstream_cmake}")
+        # Build only libhydrasdr/ (skip hydrasdr-tools which we don't need).
+        # This follows the same pattern used by kalibrate-hydrasdr.
+        add_subdirectory(
+            ${hydrasdr_host_SOURCE_DIR}/libhydrasdr
+            ${hydrasdr_host_BINARY_DIR}/libhydrasdr
+            EXCLUDE_FROM_ALL
+        )
 
-        # Use patched upstream CMakeLists.txt for all platforms.
-        # MSVC-specific deps (libusb download, pthreads4w) are gated by if(MSVC)
-        # in the upstream, so Linux/macOS simply skip them.
-        add_subdirectory(${hydrasdr_host_SOURCE_DIR} ${hydrasdr_host_BINARY_DIR})
-
-        # After add_subdirectory, the library target 'hydrasdr' should be available
+        # After add_subdirectory, the library targets should be available
         if(TARGET hydrasdr)
             message(STATUS "HydraSDR fetched and building as subproject")
-            # Get include directory from the fetched source
             set(HydraSDR_INCLUDE_DIRS ${hydrasdr_host_SOURCE_DIR}/libhydrasdr/src)
             include_directories(${HydraSDR_INCLUDE_DIRS})
+
             # Fix symbol visibility on non-Windows: upstream generate_export_header()
-            # sets C_VISIBILITY_PRESET=hidden, but hydrasdr.h only uses
-            # __declspec(dllexport) on Windows — ADDAPI is empty on Linux/macOS,
-            # so all symbols end up hidden in the .so. Override to default.
+            # sets C_VISIBILITY_PRESET=hidden, but hydrasdr.h uses ADDAPI (empty
+            # on Linux/macOS) instead of the generated HYDRASDR_EXPORT macro, so
+            # all symbols end up hidden in the .so/.dylib.
+            # Override the property AND add explicit compile flag to ensure
+            # symbols are visible (last flag wins with GCC/Clang).
             if(NOT WIN32)
-                set_target_properties(hydrasdr PROPERTIES C_VISIBILITY_PRESET default)
-                set_target_properties(hydrasdr PROPERTIES VISIBILITY_INLINES_HIDDEN OFF)
+                set_target_properties(hydrasdr PROPERTIES
+                    C_VISIBILITY_PRESET default
+                    VISIBILITY_INLINES_HIDDEN OFF)
+                target_compile_options(hydrasdr PRIVATE -fvisibility=default)
             endif()
-            # Link against the hydrasdr target directly
+
             list(APPEND SDR_LIBRARIES hydrasdr)
             ADD_DEFINITIONS(-DHYDRASDR)
             set(HydraSDR_FOUND TRUE)
-            # Set DLL directory for Windows
             if(WIN32)
                 set(HydraSDR_DLL_DIR $<TARGET_FILE_DIR:hydrasdr> CACHE PATH "Directory containing HydraSDR DLLs" FORCE)
             endif()
