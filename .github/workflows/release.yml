@@ -148,10 +148,8 @@ jobs:
       matrix:
         include:
           - os: ubuntu-24.04
-            codename: Noble Numbat
             label: Ubuntu-24.04-LTS-Noble-Numbat
           - os: ubuntu-22.04
-            codename: Jammy Jellyfish
             label: Ubuntu-22.04-LTS-Jammy-Jellyfish
     runs-on: ${{ matrix.os }}
     name: ${{ matrix.label }}
@@ -179,13 +177,15 @@ jobs:
         run: |
           sudo apt-get install -q -y ruby ruby-dev rubygems
           sudo gem install --no-document fpm
-          VERSION=${{ needs.prepare.outputs.version }}
+          VERSION="${{ needs.prepare.outputs.version }}"
+          LABEL="${{ matrix.label }}"
           # Collect files
           mkdir -p pkg/usr/bin pkg/usr/lib pkg/etc/hydrasdr_433
           cp build/src/hydrasdr_433 pkg/usr/bin/
           find build -name 'libhydrasdr.so*' -exec cp {} pkg/usr/lib/ \; 2>/dev/null || true
           [ -f conf/hydrasdr_433.example.conf ] && cp conf/hydrasdr_433.example.conf pkg/etc/hydrasdr_433/ || true
           fpm -s dir -t deb -n hydrasdr-433 -v "${VERSION}" -C pkg \
+            -p "hydrasdr-433_${VERSION}_amd64_${LABEL}.deb" \
             -d 'libusb-1.0-0' -d 'libssl3 | libssl1.1' \
             --architecture amd64 \
             --maintainer 'HydraSDR <hydrasdr@users.noreply.github.com>' \
@@ -194,7 +194,7 @@ jobs:
           ls -la *.deb
       - uses: actions/upload-artifact@v4
         with:
-          name: hydrasdr_433-${{ matrix.label }}-v${{ needs.prepare.outputs.version }}.deb
+          name: hydrasdr_433-${{ matrix.label }}-v${{ needs.prepare.outputs.version }}
           path: '*.deb'
 
   # ──────────────────────────────────────────────────────────────────
@@ -242,12 +242,14 @@ jobs:
       - name: Package DEB
         run: |
           gem install --no-document --bindir /usr/bin erb fpm
-          VERSION=${{ needs.prepare.outputs.version }}
+          VERSION="${{ needs.prepare.outputs.version }}"
+          LABEL="${{ matrix.label }}"
           mkdir -p pkg/usr/bin pkg/usr/lib pkg/etc/hydrasdr_433
           cp build/src/hydrasdr_433 pkg/usr/bin/
           find build -name 'libhydrasdr.so*' -exec cp {} pkg/usr/lib/ \; 2>/dev/null || true
           [ -f conf/hydrasdr_433.example.conf ] && cp conf/hydrasdr_433.example.conf pkg/etc/hydrasdr_433/ || true
           fpm -s dir -t deb -n hydrasdr-433 -v "${VERSION}" -C pkg \
+            -p "hydrasdr-433_${VERSION}_amd64_${LABEL}.deb" \
             -d 'libusb-1.0-0' -d 'libssl3 | libssl1.1' \
             --architecture amd64 \
             --maintainer 'HydraSDR <hydrasdr@users.noreply.github.com>' \
@@ -256,7 +258,7 @@ jobs:
           ls -la *.deb
       - uses: actions/upload-artifact@v4
         with:
-          name: hydrasdr_433-${{ matrix.label }}-v${{ needs.prepare.outputs.version }}.deb
+          name: hydrasdr_433-${{ matrix.label }}-v${{ needs.prepare.outputs.version }}
           path: '*.deb'
 
   # ──────────────────────────────────────────────────────────────────
@@ -297,12 +299,14 @@ jobs:
           build/src/hydrasdr_433 -h || true
       - name: Package DEB
         run: |
-          VERSION=${{ needs.prepare.outputs.version }}
+          VERSION="${{ needs.prepare.outputs.version }}"
+          LABEL="${{ matrix.label }}"
           mkdir -p pkg/usr/bin pkg/usr/lib pkg/etc/hydrasdr_433
           cp build/src/hydrasdr_433 pkg/usr/bin/
           find build -name 'libhydrasdr.so*' -exec cp {} pkg/usr/lib/ \; 2>/dev/null || true
           [ -f conf/hydrasdr_433.example.conf ] && cp conf/hydrasdr_433.example.conf pkg/etc/hydrasdr_433/ || true
           fpm -s dir -t deb -n hydrasdr-433 -v "${VERSION}" -C pkg \
+            -p "hydrasdr-433_${VERSION}_amd64_${LABEL}.deb" \
             -d 'libusb-1.0-0' -d 'libssl3 | libssl1.1' \
             --architecture amd64 \
             --maintainer 'HydraSDR <hydrasdr@users.noreply.github.com>' \
@@ -311,7 +315,7 @@ jobs:
           ls -la *.deb
       - uses: actions/upload-artifact@v4
         with:
-          name: hydrasdr_433-${{ matrix.label }}-v${{ needs.prepare.outputs.version }}.deb
+          name: hydrasdr_433-${{ matrix.label }}-v${{ needs.prepare.outputs.version }}
           path: '*.deb'
 
   # ──────────────────────────────────────────────────────────────────
@@ -356,12 +360,14 @@ jobs:
       - name: Package RPM
         run: |
           gem install --no-document --bindir /usr/bin erb fpm
-          VERSION=${{ needs.prepare.outputs.version }}
+          VERSION="${{ needs.prepare.outputs.version }}"
+          LABEL="${{ matrix.label }}"
           mkdir -p pkg/usr/bin pkg/usr/lib64 pkg/etc/hydrasdr_433
           cp build/src/hydrasdr_433 pkg/usr/bin/
           find build -name 'libhydrasdr.so*' -exec cp {} pkg/usr/lib64/ \; 2>/dev/null || true
           [ -f conf/hydrasdr_433.example.conf ] && cp conf/hydrasdr_433.example.conf pkg/etc/hydrasdr_433/ || true
           fpm -s dir -t rpm -n hydrasdr-433 -v "${VERSION}" -C pkg \
+            -p "hydrasdr-433-${VERSION}-1.x86_64.${LABEL}.rpm" \
             -d 'libusb1' -d 'openssl-libs' \
             --architecture x86_64 \
             --maintainer 'HydraSDR <hydrasdr@users.noreply.github.com>' \
@@ -370,7 +376,7 @@ jobs:
           ls -la *.rpm
       - uses: actions/upload-artifact@v4
         with:
-          name: hydrasdr_433-${{ matrix.label }}-v${{ needs.prepare.outputs.version }}.rpm
+          name: hydrasdr_433-${{ matrix.label }}-v${{ needs.prepare.outputs.version }}
           path: '*.rpm'
 
   # ──────────────────────────────────────────────────────────────────
@@ -407,12 +413,13 @@ jobs:
       - name: Package RPM
         run: |
           gem install --no-document --bindir /usr/bin erb fpm
-          VERSION=${{ needs.prepare.outputs.version }}
+          VERSION="${{ needs.prepare.outputs.version }}"
           mkdir -p pkg/usr/bin pkg/usr/lib64 pkg/etc/hydrasdr_433
           cp build/src/hydrasdr_433 pkg/usr/bin/
           find build -name 'libhydrasdr.so*' -exec cp {} pkg/usr/lib64/ \; 2>/dev/null || true
           [ -f conf/hydrasdr_433.example.conf ] && cp conf/hydrasdr_433.example.conf pkg/etc/hydrasdr_433/ || true
           fpm -s dir -t rpm -n hydrasdr-433 -v "${VERSION}" -C pkg \
+            -p "hydrasdr-433-${VERSION}-1.x86_64.AlmaLinux-9.rpm" \
             -d 'libusbx' -d 'openssl-libs' \
             --architecture x86_64 \
             --maintainer 'HydraSDR <hydrasdr@users.noreply.github.com>' \
@@ -421,7 +428,7 @@ jobs:
           ls -la *.rpm
       - uses: actions/upload-artifact@v4
         with:
-          name: hydrasdr_433-AlmaLinux-9-v${{ needs.prepare.outputs.version }}.rpm
+          name: hydrasdr_433-AlmaLinux-9-v${{ needs.prepare.outputs.version }}
           path: '*.rpm'
 
   # ──────────────────────────────────────────────────────────────────
@@ -456,12 +463,13 @@ jobs:
       - name: Package RPM
         run: |
           gem install --no-document erb fpm
-          VERSION=${{ needs.prepare.outputs.version }}
+          VERSION="${{ needs.prepare.outputs.version }}"
           mkdir -p pkg/usr/bin pkg/usr/lib64 pkg/etc/hydrasdr_433
           cp build/src/hydrasdr_433 pkg/usr/bin/
           find build -name 'libhydrasdr.so*' -exec cp {} pkg/usr/lib64/ \; 2>/dev/null || true
           [ -f conf/hydrasdr_433.example.conf ] && cp conf/hydrasdr_433.example.conf pkg/etc/hydrasdr_433/ || true
           gem exec fpm -s dir -t rpm -n hydrasdr-433 -v "${VERSION}" -C pkg \
+            -p "hydrasdr-433-${VERSION}-1.x86_64.openSUSE-Tumbleweed.rpm" \
             -d 'libusb-1_0-0' -d 'libopenssl1_1' \
             --architecture x86_64 \
             --maintainer 'HydraSDR <hydrasdr@users.noreply.github.com>' \
@@ -470,7 +478,7 @@ jobs:
           ls -la *.rpm
       - uses: actions/upload-artifact@v4
         with:
-          name: hydrasdr_433-openSUSE-Tumbleweed-v${{ needs.prepare.outputs.version }}.rpm
+          name: hydrasdr_433-openSUSE-Tumbleweed-v${{ needs.prepare.outputs.version }}
           path: '*.rpm'
 
   # ──────────────────────────────────────────────────────────────────
@@ -505,12 +513,13 @@ jobs:
       - name: Package pkg.tar.zst
         run: |
           gem install --no-document --bindir /usr/local/bin erb fpm
-          VERSION=${{ needs.prepare.outputs.version }}
+          VERSION="${{ needs.prepare.outputs.version }}"
           mkdir -p pkg/usr/bin pkg/usr/lib pkg/etc/hydrasdr_433
           cp build/src/hydrasdr_433 pkg/usr/bin/
           find build -name 'libhydrasdr.so*' -exec cp {} pkg/usr/lib/ \; 2>/dev/null || true
           [ -f conf/hydrasdr_433.example.conf ] && cp conf/hydrasdr_433.example.conf pkg/etc/hydrasdr_433/ || true
           fpm -s dir -t pacman -n hydrasdr-433 -v "${VERSION}" -C pkg \
+            -p "hydrasdr-433-${VERSION}-1-x86_64.Arch-Linux.pkg.tar.zst" \
             -d 'libusb' -d 'openssl' \
             --architecture x86_64 \
             --maintainer 'HydraSDR <hydrasdr@users.noreply.github.com>' \
@@ -519,7 +528,7 @@ jobs:
           ls -la *.pkg.tar.zst || ls -la *.pkg.tar* || true
       - uses: actions/upload-artifact@v4
         with:
-          name: hydrasdr_433-Arch-Linux-v${{ needs.prepare.outputs.version }}.pkg.tar.zst
+          name: hydrasdr_433-Arch-Linux-v${{ needs.prepare.outputs.version }}
           path: '*.pkg.tar*'
 
   # ──────────────────────────────────────────────────────────────────
@@ -601,7 +610,7 @@ jobs:
 
       - name: Create archives
         run: |
-          VERSION=${{ needs.prepare.outputs.version }}
+          VERSION="${{ needs.prepare.outputs.version }}"
           mkdir -p release
 
           # Windows → zip
@@ -626,13 +635,13 @@ jobs:
           fi
 
           # DEBs — copy from artifact dirs
-          find artifacts -name '*.deb' -exec cp {} release/ \;
+          find artifacts -type f -name '*.deb' -exec cp {} release/ \;
 
           # RPMs — copy from artifact dirs
-          find artifacts -name '*.rpm' -exec cp {} release/ \;
+          find artifacts -type f -name '*.rpm' -exec cp {} release/ \;
 
           # Arch — copy from artifact dirs
-          find artifacts -name '*.pkg.tar*' -exec cp {} release/ \;
+          find artifacts -type f -name '*.pkg.tar*' -exec cp {} release/ \;
 
           echo "=== Release artifacts ==="
           ls -la release/
@@ -725,7 +734,7 @@ jobs:
 
       - name: Create archives
         run: |
-          VERSION=${{ needs.prepare.outputs.version }}
+          VERSION="${{ needs.prepare.outputs.version }}"
           mkdir -p release
 
           # Windows → zip
@@ -750,13 +759,13 @@ jobs:
           fi
 
           # DEBs
-          find artifacts -name '*.deb' -exec cp {} release/ \;
+          find artifacts -type f -name '*.deb' -exec cp {} release/ \;
 
           # RPMs
-          find artifacts -name '*.rpm' -exec cp {} release/ \;
+          find artifacts -type f -name '*.rpm' -exec cp {} release/ \;
 
           # Arch
-          find artifacts -name '*.pkg.tar*' -exec cp {} release/ \;
+          find artifacts -type f -name '*.pkg.tar*' -exec cp {} release/ \;
 
           echo "=== Release artifacts ==="
           ls -la release/
