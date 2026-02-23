@@ -180,7 +180,6 @@ jobs:
           sudo apt-get install -q -y ruby ruby-dev rubygems
           sudo gem install --no-document fpm
           VERSION=${{ needs.prepare.outputs.version }}
-          cmake --build build --target install -- DESTDIR="${PWD}/install"
           # Collect files
           mkdir -p pkg/usr/bin pkg/usr/lib pkg/etc/hydrasdr_433
           cp build/src/hydrasdr_433 pkg/usr/bin/
@@ -243,6 +242,7 @@ jobs:
       - name: Package DEB
         run: |
           gem install --no-document fpm
+          export PATH="$(ruby -e 'puts Gem.user_dir')/bin:$(gem environment gemdir)/bin:$PATH"
           VERSION=${{ needs.prepare.outputs.version }}
           mkdir -p pkg/usr/bin pkg/usr/lib pkg/etc/hydrasdr_433
           cp build/src/hydrasdr_433 pkg/usr/bin/
@@ -357,6 +357,7 @@ jobs:
       - name: Package RPM
         run: |
           gem install --no-document fpm
+          export PATH="$(ruby -e 'puts Gem.user_dir')/bin:$(gem environment gemdir)/bin:$PATH"
           VERSION=${{ needs.prepare.outputs.version }}
           mkdir -p pkg/usr/bin pkg/usr/lib64 pkg/etc/hydrasdr_433
           cp build/src/hydrasdr_433 pkg/usr/bin/
@@ -408,6 +409,7 @@ jobs:
       - name: Package RPM
         run: |
           gem install --no-document fpm
+          export PATH="$(ruby -e 'puts Gem.user_dir')/bin:$(gem environment gemdir)/bin:$PATH"
           VERSION=${{ needs.prepare.outputs.version }}
           mkdir -p pkg/usr/bin pkg/usr/lib64 pkg/etc/hydrasdr_433
           cp build/src/hydrasdr_433 pkg/usr/bin/
@@ -457,6 +459,7 @@ jobs:
       - name: Package RPM
         run: |
           gem install --no-document fpm
+          export PATH="$(ruby -e 'puts Gem.user_dir')/bin:$(gem environment gemdir)/bin:$PATH"
           VERSION=${{ needs.prepare.outputs.version }}
           mkdir -p pkg/usr/bin pkg/usr/lib64 pkg/etc/hydrasdr_433
           cp build/src/hydrasdr_433 pkg/usr/bin/
@@ -506,6 +509,7 @@ jobs:
       - name: Package pkg.tar.zst
         run: |
           gem install --no-document fpm
+          export PATH="$(ruby -e 'puts Gem.user_dir')/bin:$(gem environment gemdir)/bin:$PATH"
           VERSION=${{ needs.prepare.outputs.version }}
           mkdir -p pkg/usr/bin pkg/usr/lib pkg/etc/hydrasdr_433
           cp build/src/hydrasdr_433 pkg/usr/bin/

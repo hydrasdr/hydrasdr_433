@@ -1586,7 +1586,7 @@ static void parse_conf_args(r_cfg_t *cfg, int argc, char *argv[])
 }
 
 /**
- * Parse wideband scanning spec: <center>:<bandwidth>[:<channels>]
+ * Parse wideband scanning spec: \<center\>:\<bandwidth\>[:\<channels\>]
  * E.g. "868.5M:2M" or "868.5M:2M:8"
  *
  * Returns 0 on success, -1 on error.
