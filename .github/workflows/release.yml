@@ -455,13 +455,13 @@ jobs:
           build/src/hydrasdr_433 -h || true
       - name: Package RPM
         run: |
-          gem install --no-document --bindir /usr/bin erb fpm
+          gem install --no-document erb fpm
           VERSION=${{ needs.prepare.outputs.version }}
           mkdir -p pkg/usr/bin pkg/usr/lib64 pkg/etc/hydrasdr_433
           cp build/src/hydrasdr_433 pkg/usr/bin/
           find build -name 'libhydrasdr.so*' -exec cp {} pkg/usr/lib64/ \; 2>/dev/null || true
           [ -f conf/hydrasdr_433.example.conf ] && cp conf/hydrasdr_433.example.conf pkg/etc/hydrasdr_433/ || true
-          fpm -s dir -t rpm -n hydrasdr-433 -v "${VERSION}" -C pkg \
+          gem exec fpm -s dir -t rpm -n hydrasdr-433 -v "${VERSION}" -C pkg \
             -d 'libusb-1_0-0' -d 'libopenssl1_1' \
             --architecture x86_64 \
             --maintainer 'HydraSDR <hydrasdr@users.noreply.github.com>' \
