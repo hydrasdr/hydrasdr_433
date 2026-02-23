@@ -241,8 +241,9 @@ jobs:
           [ -f build/tests/channelizer-bench ] && build/tests/channelizer-bench || true
       - name: Package DEB
         run: |
-          gem install --no-document fpm
-          export PATH="$(ruby -e 'puts Gem.user_dir')/bin:$(gem environment gemdir)/bin:$PATH"
+          export GEM_HOME=/opt/gems
+          export PATH="${GEM_HOME}/bin:$PATH"
+          gem install --no-document erb fpm
           VERSION=${{ needs.prepare.outputs.version }}
           mkdir -p pkg/usr/bin pkg/usr/lib pkg/etc/hydrasdr_433
           cp build/src/hydrasdr_433 pkg/usr/bin/
@@ -356,8 +357,9 @@ jobs:
           [ -f build/tests/channelizer-bench ] && build/tests/channelizer-bench || true
       - name: Package RPM
         run: |
-          gem install --no-document fpm
-          export PATH="$(ruby -e 'puts Gem.user_dir')/bin:$(gem environment gemdir)/bin:$PATH"
+          export GEM_HOME=/opt/gems
+          export PATH="${GEM_HOME}/bin:$PATH"
+          gem install --no-document erb fpm
           VERSION=${{ needs.prepare.outputs.version }}
           mkdir -p pkg/usr/bin pkg/usr/lib64 pkg/etc/hydrasdr_433
           cp build/src/hydrasdr_433 pkg/usr/bin/
@@ -408,8 +410,9 @@ jobs:
           build/src/hydrasdr_433 -h || true
       - name: Package RPM
         run: |
-          gem install --no-document fpm
-          export PATH="$(ruby -e 'puts Gem.user_dir')/bin:$(gem environment gemdir)/bin:$PATH"
+          export GEM_HOME=/opt/gems
+          export PATH="${GEM_HOME}/bin:$PATH"
+          gem install --no-document erb fpm
           VERSION=${{ needs.prepare.outputs.version }}
           mkdir -p pkg/usr/bin pkg/usr/lib64 pkg/etc/hydrasdr_433
           cp build/src/hydrasdr_433 pkg/usr/bin/
@@ -458,8 +461,9 @@ jobs:
           build/src/hydrasdr_433 -h || true
       - name: Package RPM
         run: |
-          gem install --no-document fpm
-          export PATH="$(ruby -e 'puts Gem.user_dir')/bin:$(gem environment gemdir)/bin:$PATH"
+          export GEM_HOME=/opt/gems
+          export PATH="${GEM_HOME}/bin:$PATH"
+          gem install --no-document erb fpm
           VERSION=${{ needs.prepare.outputs.version }}
           mkdir -p pkg/usr/bin pkg/usr/lib64 pkg/etc/hydrasdr_433
           cp build/src/hydrasdr_433 pkg/usr/bin/
@@ -508,8 +512,9 @@ jobs:
           build/src/hydrasdr_433 -h || true
       - name: Package pkg.tar.zst
         run: |
-          gem install --no-document fpm
-          export PATH="$(ruby -e 'puts Gem.user_dir')/bin:$(gem environment gemdir)/bin:$PATH"
+          export GEM_HOME=/opt/gems
+          export PATH="${GEM_HOME}/bin:$PATH"
+          gem install --no-document erb fpm
           VERSION=${{ needs.prepare.outputs.version }}
           mkdir -p pkg/usr/bin pkg/usr/lib pkg/etc/hydrasdr_433
           cp build/src/hydrasdr_433 pkg/usr/bin/
