@@ -884,15 +884,17 @@ static int sdr_open_hydrasdr(sdr_dev_t **out_dev, char const *dev_query, int ver
     /* Build device info JSON string */
     const char *board_name = ctx->info.board_name[0] ? ctx->info.board_name : "unknown";
     const char *firmware_ver = ctx->info.firmware_version[0] ? ctx->info.firmware_version : "unknown";
-    size_t info_len = 256 + strlen(board_name) + strlen(firmware_ver);
+    const char *lib_ver = HYDRASDR_VERSION;
+    size_t info_len = 256 + strlen(board_name) + strlen(firmware_ver) + strlen(lib_ver);
     dev->dev_info = malloc(info_len);
     if (!dev->dev_info) {
         /* Non-critical: device info just won't be available */
     }
     else {
         snprintf(dev->dev_info, info_len,
-                 "{\"vendor\":\"HydraSDR\", \"product\":\"%s\", \"firmware\":\"%s\", \"sample_format\":\"CF32\"}",
-                 board_name, firmware_ver);
+                 "{\"vendor\":\"HydraSDR\", \"product\":\"%s\", \"firmware\":\"%s\","
+                 " \"libhydrasdr\":\"%s\", \"sample_format\":\"CF32\"}",
+                 board_name, firmware_ver, lib_ver);
     }
 
     /* Store context pointer */
@@ -975,6 +977,13 @@ static int sdr_set_sample_rate_hydrasdr(sdr_dev_t *dev, uint32_t rate, int verbo
         return -1;
 
     hydrasdr_ctx_t *ctx = (hydrasdr_ctx_t *)dev->hydrasdr_ctx;
+    int was_streaming = ctx->streaming;
+
+    /* Stop streaming before reconfiguring to avoid race with callback */
+    if (was_streaming) {
+        ctx->streaming = 0;
+        hydrasdr_stop_rx(ctx->dev);
+    }
 
     /* Store the requested rate (what hydrasdr_433 expects) */
     ctx->requested_samplerate = rate;
@@ -983,7 +992,7 @@ static int sdr_set_sample_rate_hydrasdr(sdr_dev_t *dev, uint32_t rate, int verbo
     uint32_t actual_rate = hydrasdr_find_best_samplerate(ctx, rate, verbose);
     if (actual_rate == 0) {
         print_log(LOG_ERROR, "HydraSDR", "No valid sample rate available");
-        return -1;
+        goto restart;
     }
 
     int r = hydrasdr_set_samplerate(ctx->dev, actual_rate);
@@ -991,12 +1000,12 @@ static int sdr_set_sample_rate_hydrasdr(sdr_dev_t *dev, uint32_t rate, int verbo
         if (verbose)
             print_logf(LOG_WARNING, "HydraSDR", "Failed to set sample rate: %s",
                        hydrasdr_error_name(r));
-        return -1;
+        goto restart;
     }
 
     ctx->current_samplerate = actual_rate;
 
-    /* Free old resampler if exists */
+    /* Free old resampler — safe, streaming is stopped */
     if (ctx->resampler.initialized) {
         cf32_resampler_free(&ctx->resampler);
         ctx->needs_resampling = 0;
@@ -1023,6 +1032,19 @@ static int sdr_set_sample_rate_hydrasdr(sdr_dev_t *dev, uint32_t rate, int verbo
         }
     } else {
         ctx->needs_resampling = 0;
+    }
+
+restart:
+    /* Restart streaming if it was active */
+    if (was_streaming) {
+        r = hydrasdr_start_rx(ctx->dev, hydrasdr_sample_callback, ctx);
+        if (r != HYDRASDR_SUCCESS) {
+            print_logf(LOG_ERROR, "HydraSDR",
+                       "Failed to restart streaming after rate change: %s",
+                       hydrasdr_error_name(r));
+            return -1;
+        }
+        ctx->streaming = 1;
     }
 
     if (verbose)

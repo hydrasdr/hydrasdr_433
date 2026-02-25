@@ -105,28 +105,13 @@ or `(echo "GET /stream HTTP/1.0\n"; sleep 600) | socat - tcp:127.0.0.1:8433`
 #include "list.h" // used for protocols
 #include "jsmn.h"
 #include "mongoose.h"
+#include "sdr.h"
+#include "channelizer.h"
 #include "logger.h"
 #include "fatal.h"
 #include <stdbool.h>
 
-// embed index.html so browsers allow access as local
-#define INDEX_HTML \
-    "<!DOCTYPE html>" \
-    "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">" \
-    "<meta http-equiv=\"Content-Type\" content=\"text/html; charset=UTF-8\">" \
-    "<link rel=\"icon\" href=\"https://triq.org/rxui/favicon.ico\">" \
-    "<title>rxui</title>" \
-    "<link href=\"https://fonts.googleapis.com/css?family=Roboto:100,300,400,500,700,900|Material+Icons\" rel=\"stylesheet\">" \
-    "<link href=\"https://triq.org/rxui/css/app.css\" rel=\"preload\" as=\"style\">" \
-    "<link href=\"https://triq.org/rxui/css/chunk-vendors.css\" rel=\"preload\" as=\"style\">" \
-    "<link href=\"https://triq.org/rxui/js/app.js\" rel=\"preload\" as=\"script\">" \
-    "<link href=\"https://triq.org/rxui/js/chunk-vendors.js\" rel=\"preload\" as=\"script\">" \
-    "<link href=\"https://triq.org/rxui/css/chunk-vendors.css\" rel=\"stylesheet\">" \
-    "<link href=\"https://triq.org/rxui/css/app.css\" rel=\"stylesheet\">" \
-    "<div id=\"app\"></div>" \
-    "<noscript><strong>We're sorry but rxui doesn't work properly without JavaScript enabled. Please enable it to continue.</strong></noscript>" \
-    "<script src=\"https://triq.org/rxui/js/chunk-vendors.js\"></script>" \
-    "<script src=\"https://triq.org/rxui/js/app.js\"></script>"
+#include "webui_assets.h"
 
 // generic ring list
 
@@ -246,6 +231,11 @@ static data_t *meta_data(r_cfg_t *cfg)
             "report_description", "", DATA_INT, cfg->report_description,
             "report_stats", "", DATA_INT, cfg->report_stats,
             "stats_interval", "", DATA_INT, cfg->stats_interval,
+            "wideband_mode", "", DATA_INT, cfg->wideband_mode,
+            "wideband_center", "", DATA_DOUBLE, (double)cfg->wideband_center,
+            "wideband_bandwidth", "", DATA_DOUBLE, (double)cfg->wideband_bandwidth,
+            "wideband_channels", "", DATA_INT, cfg->wideband_channels,
+            "web_ui_debug", "", DATA_INT, cfg->web_ui_debug,
             NULL);
 }
 
@@ -527,6 +517,9 @@ static void rpc_exec(rpc_t *rpc, r_cfg_t *cfg)
     else if (!strcmp(rpc->method, "get_dev_info")) {
         rpc->response(rpc, 1, cfg->dev_info, 0);
     }
+    else if (!strcmp(rpc->method, "get_version")) {
+        rpc->response(rpc, 0, version_string(), 0);
+    }
     else if (!strcmp(rpc->method, "get_gain")) {
         rpc->response(rpc, 0, cfg->gain_str, 0);
     }
@@ -559,11 +552,27 @@ static void rpc_exec(rpc_t *rpc, r_cfg_t *cfg)
         rpc->response(rpc, 2, NULL, cfg->conversion_mode);
     }
     else if (!strcmp(rpc->method, "get_stats")) {
-        char buf[20480]; // we expect the stats string to be around 15k bytes.
         data_t *data = create_report_data(cfg, 2/*report active devices*/);
         // flush_report_data(cfg); // snapshot, do not flush
-        data_print_jsons(data, buf, sizeof(buf));
-        rpc->response(rpc, 1, buf, 0);
+        // Dynamic buffer: start at 32 KB, double until data fits (max 1 MB).
+        size_t buf_size = 32768;
+        char *buf = NULL;
+        size_t written;
+        do {
+            free(buf);
+            buf = malloc(buf_size);
+            if (!buf) break;
+            written = data_print_jsons(data, buf, buf_size);
+            if (written < buf_size - 1) break; // data fits
+            buf_size *= 2;
+        } while (buf_size <= 1048576);
+        if (buf) {
+            rpc->response(rpc, 1, buf, 0);
+            free(buf);
+        }
+        else {
+            rpc->response(rpc, 0, "Out of memory", 0);
+        }
         data_free(data);
     }
     else if (!strcmp(rpc->method, "get_meta")) {
@@ -574,10 +583,26 @@ static void rpc_exec(rpc_t *rpc, r_cfg_t *cfg)
         data_free(data);
     }
     else if (!strcmp(rpc->method, "get_protocols")) {
-        char buf[102400]; // we expect the protocol string to be around 80k bytes.
         data_t *data = protocols_data(cfg);
-        data_print_jsons(data, buf, sizeof(buf));
-        rpc->response(rpc, 1, buf, 0);
+        // Dynamic buffer: start at 32 KB, double until data fits (max 1 MB).
+        size_t buf_size = 32768;
+        char *buf = NULL;
+        size_t written;
+        do {
+            free(buf);
+            buf = malloc(buf_size);
+            if (!buf) break;
+            written = data_print_jsons(data, buf, buf_size);
+            if (written < buf_size - 1) break; // data fits
+            buf_size *= 2;
+        } while (buf_size <= 1048576);
+        if (buf) {
+            rpc->response(rpc, 1, buf, 0);
+            free(buf);
+        }
+        else {
+            rpc->response(rpc, 0, "Out of memory", 0);
+        }
         data_free(data);
     }
 
@@ -621,10 +646,20 @@ static void rpc_exec(rpc_t *rpc, r_cfg_t *cfg)
     }
     else if (!strcmp(rpc->method, "verbosity")) {
         cfg->verbosity = rpc->val;
+        /* Propagate to all registered decoders */
+        for (void **iter = cfg->demod->r_devs.elems; iter && *iter; ++iter) {
+            r_device *r_dev = *iter;
+            r_dev->verbose = cfg->verbosity > 4 ? cfg->verbosity - 5 : 0;
+        }
         rpc->response(rpc, 0, "Ok", 0);
     }
     else if (!strcmp(rpc->method, "verbose_bits")) {
         cfg->verbose_bits = rpc->val;
+        /* Propagate to all registered decoders */
+        for (void **iter = cfg->demod->r_devs.elems; iter && *iter; ++iter) {
+            r_device *r_dev = *iter;
+            r_dev->verbose_bits = cfg->verbose_bits;
+        }
         rpc->response(rpc, 0, "Ok", 0);
     }
     else if (!strcmp(rpc->method, "protocol")) {
@@ -662,6 +697,40 @@ static void rpc_exec(rpc_t *rpc, r_cfg_t *cfg)
     }
     else if (!strcmp(rpc->method, "sample_rate")) {
         set_sample_rate(cfg, rpc->val);
+        rpc->response(rpc, 0, "Ok", 0);
+    }
+    else if (!strcmp(rpc->method, "wideband")) {
+        if (!rpc->arg || !*rpc->arg || !strcmp(rpc->arg, "off") || !strcmp(rpc->arg, "0")) {
+            cfg->wideband_mode = 0;
+            /* Reset channelizer for clean restart if re-enabled */
+            if (cfg->channelizer)
+                channelizer_reset(cfg->channelizer);
+            rpc->response(rpc, 0, "Ok", 0);
+        }
+        else {
+            float center, bandwidth;
+            int channels;
+            if (parse_wideband_spec(rpc->arg, &center, &bandwidth, &channels) == 0) {
+                cfg->wideband_center = center;
+                cfg->wideband_bandwidth = bandwidth;
+                cfg->wideband_channels = channels;
+                cfg->wideband_spacing = bandwidth / (float)channels;
+                cfg->wideband_mode = 1;
+                /* Reset channelizer to trigger reinitialization */
+                if (cfg->channelizer)
+                    channelizer_reset(cfg->channelizer);
+                rpc->response(rpc, 0, "Ok", 0);
+            }
+            else {
+                rpc->response(rpc, -1, "Invalid wideband spec", 0);
+            }
+        }
+    }
+    else if (!strcmp(rpc->method, "biastee")) {
+        /* Route through sdr_apply_settings which handles biastee=0/1 */
+        char buf[16];
+        snprintf(buf, sizeof(buf), "biastee=%d", rpc->val ? 1 : 0);
+        sdr_apply_settings(cfg->dev, buf, 1);
         rpc->response(rpc, 0, "Ok", 0);
     }
 
@@ -703,36 +772,37 @@ static void handle_options(struct mg_connection *nc, struct http_message *hm)
             "\r\n");
 }
 
-static void handle_get(struct mg_connection *nc, struct http_message *hm, char const *buf, unsigned int len)
+static const webui_asset_t *find_webui_asset(const struct mg_str *uri)
 {
-    UNUSED(hm);
-    //mg_send_head(nc, 200, -1, NULL);
-    mg_printf(nc,
-            "HTTP/1.1 200 OK\r\n"
-            "Content-Length: %u\r\n"
-            "\r\n", len);
-    mg_send(nc, buf, (size_t)len);
+    for (const webui_asset_t *a = webui_assets; a->uri; a++) {
+        if (mg_vcmp(uri, a->uri) == 0)
+            return a;
+    }
+    return NULL;
 }
 
-static void handle_redirect(struct mg_connection *nc, struct http_message *hm)
+static void handle_webui_asset(struct mg_connection *nc,
+        struct http_message *hm, const webui_asset_t *asset)
 {
-    // get the host header
-    struct mg_str host = {0};
-    for (int i = 0; i < MG_MAX_HTTP_HEADERS && hm->header_names[i].len > 0; i++) {
-        // struct mg_str hn = hm->header_names[i];
-        // struct mg_str hv = hm->header_values[i];
-        // fprintf(stderr, "Header: %.*s: %.*s\n", (int)hn.len, hn.p, (int)hv.len, hv.p);
-        if (mg_vcasecmp(&hm->header_names[i], "Host") == 0) {
-            host = hm->header_values[i];
-            break;
-        }
+    UNUSED(hm);
+    if (asset->is_gzipped) {
+        mg_printf(nc,
+                "HTTP/1.1 200 OK\r\n"
+                "Content-Length: %u\r\n"
+                "Content-Type: %s\r\n"
+                "Content-Encoding: gzip\r\n"
+                "Cache-Control: no-cache\r\n"
+                "\r\n", asset->size, asset->mime_type);
+    } else {
+        mg_printf(nc,
+                "HTTP/1.1 200 OK\r\n"
+                "Content-Length: %u\r\n"
+                "Content-Type: %s\r\n"
+                "Cache-Control: no-cache\r\n"
+                "\r\n", asset->size, asset->mime_type);
     }
-
-    mg_printf(nc, "%s%s%.*s%s\r\n",
-            "HTTP/1.1 307 Temporary Redirect\r\n",
-            "Location: http://triq.org/rxui/#",
-            (int)host.len, host.p,
-            "\r\n\r\n");
+    mg_send(nc, asset->data, asset->size);
+    nc->flags |= MG_F_SEND_AND_CLOSE;
 }
 
 static void handle_openmetrics(struct mg_connection *nc, struct http_message *hm)
@@ -1095,12 +1165,12 @@ static void ev_handler(struct mg_connection *nc, int ev, void *ev_data)
         if (mg_vcmp(&hm->method, "OPTIONS") == 0) {
             handle_options(nc, hm);
         }
-        else if (mg_vcmp(&hm->uri, "/") == 0) {
-            handle_get(nc, hm, INDEX_HTML, sizeof(INDEX_HTML));
-            handle_redirect(nc, hm);
-        }
         else if (mg_vcmp(&hm->uri, "/ui") == 0) {
-            handle_redirect(nc, hm);
+            mg_printf(nc,
+                    "HTTP/1.1 301 Moved Permanently\r\n"
+                    "Location: /\r\n"
+                    "\r\n");
+            nc->flags |= MG_F_SEND_AND_CLOSE;
         }
         else if (mg_vcmp(&hm->uri, "/jsonrpc") == 0) {
             handle_json_rpc(nc, hm);
@@ -1120,12 +1190,22 @@ static void ev_handler(struct mg_connection *nc, int ev, void *ev_data)
         else if (mg_vcmp(&hm->uri, "/api") == 0) {
             //handle_api_query(nc, hm);
         }
-#ifdef SERVE_STATIC
         else {
-            struct http_server_context *ctx = nc->user_data;
-            mg_serve_http(nc, hm, ctx->server_opts); /* Serve static content */
-        }
+            const webui_asset_t *asset = find_webui_asset(&hm->uri);
+            if (asset) {
+                handle_webui_asset(nc, hm, asset);
+            }
+#ifdef SERVE_STATIC
+            else {
+                struct http_server_context *ctx = nc->user_data;
+                mg_serve_http(nc, hm, ctx->server_opts); /* Serve static content */
+            }
+#else
+            else {
+                mg_http_send_error(nc, 404, NULL);
+            }
 #endif
+        }
         break;
     }
     case MG_EV_CLOSE:

@@ -42,7 +42,7 @@ if(GIT_COMMIT) # is a git repo
     # check if git describe failed (no tags found) - fallback to short commit hash
     if(GIT_VERSION MATCHES "NOTFOUND")
         string(SUBSTRING "${GIT_COMMIT}" 0 8 GIT_SHORT_COMMIT)
-        set(GIT_VERSION "25.12.1-g${GIT_SHORT_COMMIT}")
+        set(GIT_VERSION "25.12.2-g${GIT_SHORT_COMMIT}")
         message(STATUS "No git tags found, using commit hash for version")
     endif()
     message(STATUS "Found Git version: ${GIT_REFSPEC} commit ${GIT_COMMIT} from ${GIT_TIMESTAMP_ISO}")

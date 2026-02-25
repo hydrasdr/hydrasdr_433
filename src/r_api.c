@@ -140,7 +140,13 @@ void set_gain_str(struct r_cfg *cfg, char const *gain_str)
         if (!cfg->gain_str)
             WARN_STRDUP("set_gain_str()");
     }
-    sdr_set_tuner_gain(cfg->dev, gain_str, 0);
+    /* Named gain setting (e.g. "linearity=10"): route to sdr_apply_settings */
+    if (gain_str && strchr(gain_str, '=')) {
+        sdr_apply_settings(cfg->dev, gain_str, 1);
+    }
+    else {
+        sdr_set_tuner_gain(cfg->dev, gain_str, 0);
+    }
 }
 
 /* general */

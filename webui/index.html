@@ -1,0 +1,598 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>hydrasdr_433</title>
+<link rel="icon" href="/favicon.ico">
+<link rel="stylesheet" href="/app.css">
+</head>
+<body>
+<header id="hdr">
+	<div id="hdr-brand">hydrasdr_433</div>
+	<div id="hdr-info"></div>
+	<div id="hdr-status" class="off" title="WebSocket status">disconnected</div>
+</header>
+<nav id="tabs">
+	<button class="tab active" data-tab="monitor">Monitor</button>
+	<button class="tab" data-tab="devices">Devices</button>
+	<button class="tab" data-tab="syslog" id="tab-btn-syslog">Syslog</button>
+	<button class="tab" data-tab="protocols" id="tab-btn-protocols">Protocols</button>
+	<button class="tab" data-tab="stats" id="tab-btn-stats">Stats</button>
+	<button class="tab" data-tab="system" id="tab-btn-system">System</button>
+	<button class="tab tab-overlay" data-tab="help" id="tab-btn-help">Help</button>
+	<button class="tab tab-overlay" data-tab="settings" id="tab-btn-settings">Settings</button>
+	<button class="tab tab-debug tab-overlay" data-tab="debug" id="tab-btn-debug"
+		style="display:none">Debug</button>
+</nav>
+
+<!-- Monitor tab -->
+<div id="tab-monitor" class="panel active">
+	<div id="mon-bar" class="bar">
+		<span id="mon-count">0 events</span>
+		<span id="mon-rate" title="Events per second">0.0 evt/s</span>
+		<label id="mon-autoscroll-lbl"><input type="checkbox" id="mon-autoscroll" checked> Auto-scroll</label>
+		<button id="mon-export" class="btn-sm">Export CSV</button>
+		<input id="mon-filter" class="filter-input" type="text" placeholder="Filter by model..." title="Filter events by model name (F)">
+	</div>
+	<div id="mon-chart-wrap">
+		<canvas id="mon-chart"></canvas>
+	</div>
+	<input type="range" id="mon-chart-scroll" class="chart-scroll"
+		min="0" max="1000" value="1000" title="Scroll chart timeline">
+	<div class="chart-resize-handle" data-chart="mon" title="Drag to resize chart height"></div>
+	<div id="mon-wrap">
+		<div id="mon-groups"></div>
+	</div>
+</div>
+
+<!-- Protocols tab -->
+<div id="tab-protocols" class="panel">
+	<div id="proto-bar" class="bar">
+		<input id="proto-search" type="text" placeholder="Filter protocols...">
+		<span id="proto-mod-counts"></span>
+		<span id="proto-count"></span>
+	</div>
+	<div id="proto-wrap">
+		<table id="proto-table">
+			<thead><tr>
+				<th class="col-num">#</th>
+				<th class="col-name">Name</th>
+				<th class="col-mod">Mod</th>
+				<th class="col-en">Enabled</th>
+			</tr></thead>
+			<tbody id="proto-body"></tbody>
+		</table>
+	</div>
+</div>
+
+<!-- Settings overlay panel -->
+<div id="tab-settings" class="overlay-panel">
+	<div class="overlay-titlebar">
+		<span class="overlay-title">Settings</span>
+		<button class="overlay-close" data-overlay="settings" title="Close (Esc)">&times;</button>
+	</div>
+	<div class="overlay-body">
+	<div class="settings-grid">
+		<fieldset>
+			<legend>Radio</legend>
+			<div class="field">
+				<label for="s-freq">Center frequency (MHz)</label>
+				<div class="field-row">
+					<input id="s-freq" type="text" placeholder="433.920">
+					<button class="btn-apply" data-apply="freq">Apply</button>
+				</div>
+				<div class="freq-presets">
+					<button class="btn-preset" data-freq="433.920">433.92</button>
+					<button class="btn-preset" data-freq="868.500">868.5</button>
+					<button class="btn-preset" data-freq="315.000">315</button>
+					<button class="btn-preset" data-freq="345.000">345</button>
+					<button class="btn-preset" data-freq="390.000">390</button>
+				</div>
+			</div>
+			<div class="field">
+				<label>Gain</label>
+				<div class="gain-mode-row">
+					<button class="btn-gain active" data-gain-mode="auto">Auto</button>
+					<button class="btn-gain" data-gain-mode="linearity">Linearity</button>
+					<button class="btn-gain" data-gain-mode="sensitivity">Sensitivity</button>
+				</div>
+				<div class="field-row" id="gain-val-row">
+					<input id="s-gain" type="text" placeholder="10" disabled>
+					<button class="btn-apply" data-apply="gain">Apply</button>
+				</div>
+			</div>
+			<div class="field">
+				<label for="s-srate">Sample rate (e.g. 250k, 1M)</label>
+				<div class="field-row">
+					<input id="s-srate" type="text" placeholder="250k">
+					<button class="btn-apply" data-apply="srate">Apply</button>
+				</div>
+				<div class="freq-presets">
+					<button class="btn-preset" data-srate="250000">250k</button>
+					<button class="btn-preset" data-srate="1000000">1M</button>
+					<button class="btn-preset" data-srate="2000000">2M</button>
+				</div>
+			</div>
+			<div class="field">
+				<label for="s-ppm">PPM error correction</label>
+				<div class="field-row">
+					<input id="s-ppm" type="number" step="1">
+					<button class="btn-apply" data-apply="ppm">Apply</button>
+				</div>
+			</div>
+			<div class="field">
+				<label for="s-hop">Hop interval (s)</label>
+				<div class="field-row">
+					<input id="s-hop" type="number" step="1">
+					<button class="btn-apply" data-apply="hop">Apply</button>
+				</div>
+			</div>
+			<div class="field">
+				<div class="check-group">
+					<label title="Enable bias-T power on antenna connector"><input type="checkbox" id="s-biastee"> Bias-T (antenna power)</label>
+				</div>
+			</div>
+		</fieldset>
+		<fieldset>
+			<legend>Wideband</legend>
+			<div class="field">
+				<label for="s-wideband">Wideband spec (center:bandwidth:channels)</label>
+				<div class="field-row">
+					<input id="s-wideband" type="text" placeholder="433.92M:2M:8">
+					<button class="btn-apply" data-apply="wideband">Apply</button>
+				</div>
+				<div class="freq-presets">
+					<button class="btn-preset" data-wideband="off">Off</button>
+					<button class="btn-preset" data-wideband="433.92M:2M:8">433 EU</button>
+					<button class="btn-preset" data-wideband="915M:8M:16">915 US</button>
+					<button class="btn-preset" data-wideband="318.75M:2M:8">318-319.5 US</button>
+				</div>
+			</div>
+		</fieldset>
+		<fieldset>
+			<legend>Output</legend>
+			<div class="field">
+				<label for="s-convert">Conversion mode</label>
+				<div class="field-row">
+					<select id="s-convert">
+						<option value="0">Native</option>
+						<option value="1">SI</option>
+						<option value="2">Customary</option>
+					</select>
+					<button class="btn-apply" data-apply="convert">Apply</button>
+				</div>
+			</div>
+			<div class="field">
+				<label>Report options <small>(display only)</small></label>
+				<div class="check-group">
+					<label title="Show RSSI/SNR values and signal strength bar"><input type="checkbox" id="s-meta-level"> Signal level</label>
+					<label title="Show raw bit-level data"><input type="checkbox" id="s-meta-bits"> Verbose bits</label>
+					<label title="Show protocol decoder number"><input type="checkbox" id="s-meta-proto"> Protocol #</label>
+					<label title="Show text description field"><input type="checkbox" id="s-meta-desc"> Description</label>
+					<label title="Show high-resolution timestamps (microseconds)"><input type="checkbox" id="s-meta-hires"> Hi-res time</label>
+				</div>
+			</div>
+			<div class="field">
+				<label for="s-verbosity">Verbosity</label>
+				<div class="field-row">
+					<input id="s-verbosity" type="number" min="0" max="4" step="1">
+					<button class="btn-apply" data-apply="verbosity">Apply</button>
+				</div>
+			</div>
+		</fieldset>
+		<fieldset>
+			<legend>Advanced</legend>
+			<div class="field">
+				<div class="check-group">
+					<label title="Show Debug tab with test tools, benchmarks, and performance dashboard"><input type="checkbox" id="s-debug-enable"> Enable Debug panel</label>
+				</div>
+			</div>
+		</fieldset>
+	</div>
+	</div>
+</div>
+
+<!-- Stats tab -->
+<div id="tab-stats" class="panel">
+	<div id="stats-bar" class="bar">
+		<button id="stats-refresh" class="btn-sm">Refresh</button>
+		<label><input type="checkbox" id="stats-auto" checked> Auto (10s)</label>
+	</div>
+	<pre id="stats-content">Loading...</pre>
+</div>
+
+<!-- System tab -->
+<div id="tab-system" class="panel">
+	<div id="sys-wrap">
+		<div class="sys-section">
+			<h3>Device</h3>
+			<pre id="sys-dev">--</pre>
+		</div>
+		<div class="sys-section">
+			<h3>Meta</h3>
+			<pre id="sys-meta">--</pre>
+		</div>
+		<div class="sys-section" id="sys-wb-section" style="display:none">
+			<h3>Channelizer</h3>
+			<pre id="sys-wb">--</pre>
+		</div>
+		<div class="sys-section">
+			<h3>Frequencies</h3>
+			<div id="sys-freqs">--</div>
+		</div>
+	</div>
+</div>
+
+<!-- Help overlay panel -->
+<div id="tab-help" class="overlay-panel">
+	<div class="overlay-titlebar">
+		<span class="overlay-title">Help</span>
+		<button class="overlay-close" data-overlay="help" title="Close (Esc)">&times;</button>
+	</div>
+	<div class="overlay-body">
+	<div id="help-content">
+		<section class="help-section">
+			<h2>hydrasdr_433 Web UI</h2>
+			<p>Real-time monitoring of ISM band devices on 433MHz, 868 MHz (SRD), 315 MHz, 345 MHz, and 915 MHz ISM bands. Receives and decodes signals from weather stations, tire pressure sensors, remote controls, and hundreds of other devices.</p>
+			<p>Zero external dependencies &mdash; all assets self-hosted, system fonts only, works offline once loaded.</p>
+		</section>
+		<section class="help-section">
+			<h2>Tabs</h2>
+			<dl class="help-dl">
+				<dt>Monitor</dt>
+				<dd>Live event stream with activity chart. Events grouped by model, each with sortable columns. Includes real-time event rate, filter, pause, and CSV export.</dd>
+				<dt>Devices</dt>
+				<dd>Unique device registry. Groups devices by model + ID, shows activity chart, last-seen time, and event count. Click a device to expand its event history. Devices are tracked even when the Monitor is paused.</dd>
+				<dt>Syslog</dt>
+				<dd>Server log messages color-coded by severity (FATAL, ERROR, WARNING, INFO, etc.). Filterable by text content.</dd>
+				<dt>Protocols</dt>
+				<dd>All supported protocol decoders with modulation type (OOK/FSK) and enabled status. Click to expand signal parameters and output fields.</dd>
+				<dt>Settings</dt>
+				<dd>Draggable floating overlay for radio configuration (frequency, gain, sample rate, PPM, hop interval) with presets, and display-only report option toggles. Stays visible while other tabs are active.</dd>
+				<dt>Stats</dt>
+				<dd>Server decoder statistics and client performance metrics. Auto-refreshes every 10 seconds.</dd>
+				<dt>System</dt>
+				<dd>SDR hardware info, configuration snapshot, channelizer status (wideband mode), and frequency list.</dd>
+				<dt>Help</dt>
+				<dd>This page.</dd>
+			</dl>
+		</section>
+		<section class="help-section">
+			<h2>Keyboard Shortcuts</h2>
+			<table class="help-keys">
+				<tr><td><kbd>1</kbd> &ndash; <kbd>7</kbd></td><td>Switch tabs (Monitor, Devices, Syslog, Protocols, Stats, System, Help)</td></tr>
+				<tr><td><kbd>8</kbd></td><td>Toggle Settings overlay</td></tr>
+				<tr><td><kbd>9</kbd></td><td>Toggle Debug overlay (when enabled with <code>-M web_ui_debug</code>)</td></tr>
+				<tr><td><kbd>Space</kbd></td><td>Pause / Resume the Monitor event stream</td></tr>
+				<tr><td><kbd>F</kbd></td><td>Focus Monitor filter input (auto-switches to Monitor)</td></tr>
+				<tr><td><kbd>D</kbd></td><td>Focus Devices search input (auto-switches to Devices)</td></tr>
+				<tr><td><kbd>Esc</kbd></td><td>Close overlay / clear filter / collapse detail / unfocus input</td></tr>
+			</table>
+		</section>
+		<section class="help-section">
+			<h2>Activity Chart</h2>
+			<p>The activity chart appears in both Monitor and Devices tabs. Both charts share the same data, zoom, and pan state.</p>
+			<dl class="help-dl">
+				<dt>Dot Plot</dt>
+				<dd>Each decoded event is a colored dot. Y-axis shows signal strength (dB), X-axis shows time. Dots are color-coded by model name. Events without signal data are spread across vertical lanes by model.</dd>
+				<dt>Session Bands</dt>
+				<dd>Consecutive events from the same device are grouped into semi-transparent bands. A new session starts after a 2-second gap or when the decoder signals a new transmission.</dd>
+				<dt>Live Mode</dt>
+				<dd>By default, the chart follows real-time (right edge = now). Panning or zooming freezes the view. To return to live: double-click the chart, drag the scrollbar to the rightmost position, or click Zoom Reset.</dd>
+				<dt>History</dt>
+				<dd>The History selector (Devices tab) controls how much data is kept: 5 min, 10 min, 30 min, or 1 hour.</dd>
+			</dl>
+			<h2>Chart Controls</h2>
+			<table class="help-keys">
+				<tr><td>Mouse wheel</td><td>Zoom in/out anchored at cursor (1 ms to 60 min range)</td></tr>
+				<tr><td><kbd>Shift</kbd> + drag</td><td>Rubber-band zoom: select a time range to zoom into</td></tr>
+				<tr><td>Click + drag</td><td>Pan through time (drag right = forward, left = back)</td></tr>
+				<tr><td>Double-click</td><td>Return to live mode (right edge = now)</td></tr>
+				<tr><td>Scrollbar</td><td>Quick navigation across the full time range</td></tr>
+				<tr><td>Zoom Reset button</td><td>Reset zoom and pan to defaults</td></tr>
+				<tr><td>Resize handle</td><td>Drag the bar below the chart to change chart height</td></tr>
+			</table>
+			<p>The current zoom level is shown in the top-right corner with smart labels (ms/s/min). When panned, the indicator changes from <em>LIVE</em> to a time offset (e.g. &ldquo;5min ago&rdquo;).</p>
+		</section>
+		<section class="help-section">
+			<h2>Monitor</h2>
+			<dl class="help-dl">
+				<dt>Event Groups</dt>
+				<dd>Events are grouped by model name. Each group has a collapsible header showing the model name (color-coded) and event count. Click the header to expand or collapse.</dd>
+				<dt>Dynamic Columns</dt>
+				<dd>Data columns are added automatically as new fields appear in events (temperature, humidity, pressure, etc.). Up to 500 events are kept per model group.</dd>
+				<dt>Filter</dt>
+				<dd>Type in the filter box (or press <kbd>F</kbd>) to show only matching model groups. The border highlights when a filter is active. Press <kbd>Esc</kbd> to clear.</dd>
+				<dt>Sort</dt>
+				<dd>Click column headers (Time, ID, or any data column) to sort within each group. First click sorts ascending, second click descending, third click returns to arrival order.</dd>
+				<dt>Pause</dt>
+				<dd>The Pause button is in the Devices toolbar. Click it or press <kbd>Space</kbd> to freeze everything &mdash; Monitor, activity chart, and device updates all stop. Events arriving during pause are buffered. On Resume, all buffered events appear at once (nothing is lost).</dd>
+				<dt>Event Rate</dt>
+				<dd>The toolbar shows the live event rate (events per second) calculated over a 5-second rolling window.</dd>
+				<dt>Signal Bar</dt>
+				<dd>When Signal level is enabled in Settings, a colored bar appears next to timestamps showing relative signal strength (green = strong, orange = medium, red = weak).</dd>
+				<dt>Row Detail</dt>
+				<dd>Click any event row to expand all fields as key-value pairs below. Values are smart-formatted (temperatures with units, battery status as colored dots, etc.).</dd>
+				<dt>Auto-scroll</dt>
+				<dd>When checked, the view scrolls to show the newest event after each batch.</dd>
+				<dt>Export CSV</dt>
+				<dd>Downloads all visible events with timestamps, model names, IDs, and data fields.</dd>
+				<dt>Clear</dt>
+				<dd>The Clear button is in the Devices toolbar. Removes all events, resets the device registry, and clears the activity charts.</dd>
+			</dl>
+		</section>
+		<section class="help-section">
+			<h2>Devices</h2>
+			<dl class="help-dl">
+				<dt>Device Groups</dt>
+				<dd>Devices are grouped by model name. Each group shows a collapsible list of unique devices identified by model + ID.</dd>
+				<dt>Search</dt>
+				<dd>Type in the search box (or press <kbd>D</kbd>) to filter devices by model name or ID.</dd>
+				<dt>Device List</dt>
+				<dd>Shows ID, last-seen time, event count, and latest data values. Rows flash green for 3 seconds when new data arrives. Click column headers to sort.</dd>
+				<dt>Device Detail</dt>
+				<dd>Click a device row to expand its summary (model, ID, first/last seen, event count) and paginated event history (20 per page, up to 200 stored). Click any event row to expand all fields. Click the device row again or press <kbd>Esc</kbd> to collapse.</dd>
+				<dt>Export CSV</dt>
+				<dd>Downloads the device list with model, ID, first seen, last seen, event count, and latest data values.</dd>
+			<dt>Pause / Clear</dt>
+				<dd>Pause/Resume and Clear buttons are in the Devices toolbar. Pause freezes everything (Monitor, chart, devices) and buffers incoming events &mdash; Resume replays them all at once. Clear resets all events and devices.</dd>
+			</dl>
+		</section>
+		<section class="help-section">
+			<h2>Syslog</h2>
+			<dl class="help-dl">
+				<dt>Log Display</dt>
+				<dd>Shows server log messages with timestamp, source component, severity level, and message text. Up to 200 entries are retained.</dd>
+				<dt>Severity Colors</dt>
+				<dd>FATAL/CRITICAL: red background. ERROR: red text. WARNING: orange. NOTICE: blue. INFO: gray. DEBUG/TRACE: dark gray.</dd>
+				<dt>Filter</dt>
+				<dd>Type to search log text, source, or level name. Matching entries are shown; others are hidden.</dd>
+			</dl>
+		</section>
+		<section class="help-section">
+			<h2>Protocols</h2>
+			<dl class="help-dl">
+				<dt>Protocol List</dt>
+				<dd>All supported decoders with number, name, modulation type (OOK = green, FSK = blue), and enabled/disabled status. Disabled protocols appear dimmed.</dd>
+				<dt>Search</dt>
+				<dd>Filter by protocol name or number. Modulation counts (OOK/FSK) are shown in the toolbar.</dd>
+				<dt>Protocol Detail</dt>
+				<dd>Click a protocol row to expand its output fields, signal parameters (short/long/reset/gap/sync), and other properties.</dd>
+			</dl>
+		</section>
+		<section class="help-section">
+			<h2>Settings</h2>
+			<dl class="help-dl">
+				<dt>Radio</dt>
+				<dd>Center frequency (MHz), gain (Auto/Linearity/Sensitivity modes), sample rate, PPM error, hop interval, and bias-T toggle. Each has an Apply button and supports <kbd>Enter</kbd> to apply. Frequency and sample rate have preset buttons for common values.</dd>
+				<dt>Output</dt>
+				<dd>Conversion mode (Native/SI/Customary) controls server-side unit formatting. Verbosity (0&ndash;4) controls server debug output level.</dd>
+				<dt>Report Options</dt>
+				<dd>Display-only toggles that control which data columns are visible in the UI. The server always sends complete data, so toggling reveals or hides data retroactively for all existing rows:</dd>
+			</dl>
+			<dl class="help-dl">
+				<dt>Signal level</dt>
+				<dd>Show/hide RSSI/SNR values and the signal strength bar.</dd>
+				<dt>Verbose bits</dt>
+				<dd>Show/hide raw bit-level data columns.</dd>
+				<dt>Protocol #</dt>
+				<dd>Show/hide the protocol decoder number column.</dd>
+				<dt>Description</dt>
+				<dd>Show/hide the text description column.</dd>
+				<dt>Hi-res time</dt>
+				<dd>Show/hide microsecond-precision timestamps.</dd>
+			</dl>
+			<p>UTC time is a server launch option (<code>-M utc</code>) and cannot be toggled at runtime.</p>
+		</section>
+		<section class="help-section">
+			<h2>Stats</h2>
+			<dl class="help-dl">
+				<dt>Server Statistics</dt>
+				<dd>Decoder statistics fetched from the server, displayed as structured tables. Auto-refreshes every 10 seconds (toggle with checkbox). Click Refresh for manual update.</dd>
+				<dt>Client Metrics</dt>
+				<dd>Browser-side performance data: memory usage, event counts, flush timing, peak batch sizes, and render durations.</dd>
+			</dl>
+		</section>
+		<section class="help-section">
+			<h2>Connection</h2>
+			<p>The status indicator in the header shows the WebSocket connection state:</p>
+			<dl class="help-dl">
+				<dt>Connected (green)</dt>
+				<dd>Live connection to the server. Events stream in real-time.</dd>
+				<dt>Disconnected (red)</dt>
+				<dd>No connection. The UI retains all data received so far.</dd>
+				<dt>Reconnecting (orange, pulsing)</dt>
+				<dd>Automatically retrying with exponential backoff (1s initial, 30s max). The retry count is shown in the indicator.</dd>
+			</dl>
+		</section>
+		<section class="help-section">
+			<h2>Overlay Panels</h2>
+			<p>Syslog, Protocols, Stats, System, Help, Settings, and Debug are floating overlay panels that stay visible while switching between Monitor and Devices.</p>
+			<dl class="help-dl">
+				<dt>Drag</dt>
+				<dd>Drag the titlebar to move a floating panel anywhere on screen.</dd>
+				<dt>Resize</dt>
+				<dd>Drag the bottom-right corner of a floating panel to resize it.</dd>
+				<dt>Dock</dt>
+				<dd>Drag a panel to the left, right, or bottom edge of Monitor or Devices to dock it. A blue highlight shows the dock zone. Multiple panels can be docked to the same side.</dd>
+				<dt>Undock</dt>
+				<dd>Drag a docked panel's titlebar away from the edge (20+ pixels) to undock it back to a floating window.</dd>
+				<dt>Splitter</dt>
+				<dd>A draggable splitter between docked panels and the main content allows resizing each docked panel independently.</dd>
+			</dl>
+		</section>
+		<section class="help-section">
+			<h2>Smart Values</h2>
+			<p>Data fields are automatically formatted for readability:</p>
+			<dl class="help-dl">
+				<dt>Temperature</dt>
+				<dd>Displayed with degree symbol and unit (C or F).</dd>
+				<dt>Humidity</dt>
+				<dd>Displayed with percent symbol.</dd>
+				<dt>Battery</dt>
+				<dd>Shown as a colored dot: green = OK, red = low.</dd>
+				<dt>Wind</dt>
+				<dd>Speed with unit (km/h, m/s, or mph). Direction with degree symbol.</dd>
+				<dt>Rain</dt>
+				<dd>Accumulation with unit (mm or in).</dd>
+				<dt>Pressure</dt>
+				<dd>Displayed with hPa unit.</dd>
+			</dl>
+		</section>
+		<section class="help-section">
+			<h2>Debug</h2>
+			<p>The Debug tab is hidden by default. Enable it by starting the server with <code>-M web_ui_debug</code>. Toggle with <kbd>9</kbd> or the Debug tab button.</p>
+			<dl class="help-dl">
+				<dt>Test Injection</dt>
+				<dd>Inject single events by model type to test the UI without live hardware.</dd>
+				<dt>Benchmark</dt>
+				<dd>Bulk-inject 1000, 10000, or 50000 events to stress-test rendering performance. Results show events/sec throughput.</dd>
+				<dt>Rate Simulator</dt>
+				<dd>Generates a continuous stream of random events at ~100 events/sec to simulate real traffic.</dd>
+				<dt>Chart Stress</dt>
+				<dd>Fills the activity chart with thousands of dots to test chart rendering performance.</dd>
+				<dt>Performance</dt>
+				<dd>Shows client-side metrics: flush timing, batch sizes, render durations, and memory usage. Auto-refresh updates every 2 seconds.</dd>
+			</dl>
+		</section>
+		<section class="help-section">
+			<h2>Testing</h2>
+			<p>Browser console functions for testing without live hardware:</p>
+			<dl class="help-dl">
+				<dt><code>_injectTestEvent('Model')</code></dt>
+				<dd>Inject a single event with random variation. Models: Kia-TPMS, Acurite-Tower, LaCrosse-TX141W, Oregon-THN132N, Nexus-TH.</dd>
+				<dt><code>_injectBulkEvents(count, models)</code></dt>
+				<dd>Inject many events for performance testing. E.g. <code>_injectBulkEvents(1000)</code> for 1000 events across 5 models.</dd>
+			</dl>
+		</section>
+	</div>
+	</div>
+</div>
+
+<!-- Syslog tab -->
+<div id="tab-syslog" class="panel">
+	<div id="syslog-bar" class="bar">
+		<span id="syslog-count">0 entries</span>
+		<input id="syslog-search" class="filter-input" type="text" placeholder="Filter log...">
+		<button id="syslog-clear" class="btn-sm">Clear</button>
+	</div>
+	<div id="syslog-wrap">
+		<table id="syslog-table">
+			<thead><tr>
+				<th class="col-syslog-time">Time</th>
+				<th class="col-syslog-src">Source</th>
+				<th class="col-syslog-lvl">Level</th>
+				<th class="col-syslog-msg">Message</th>
+			</tr></thead>
+			<tbody id="syslog-body"></tbody>
+		</table>
+	</div>
+</div>
+
+<!-- Devices tab -->
+<div id="tab-devices" class="panel">
+	<div id="dev-bar" class="bar">
+		<input id="dev-search" class="filter-input" type="text" placeholder="Filter devices..." title="Filter devices (D)">
+		<span id="dev-count">0 devices</span>
+		<label class="dev-history-lbl" title="Chart history length">History
+			<select id="dev-history">
+				<option value="300">5 min</option>
+				<option value="600">10 min</option>
+				<option value="1800">30 min</option>
+				<option value="3600">1 hour</option>
+			</select>
+		</label>
+		<button id="dev-zoom-reset" class="btn-sm" title="Reset chart zoom to default">Zoom Reset</button>
+		<button id="mon-pause" class="btn-sm" title="Pause/Resume (Space)">Pause</button>
+		<button id="mon-clear" class="btn-sm">Clear</button>
+		<button id="dev-export" class="btn-sm">Export CSV</button>
+	</div>
+	<div id="dev-chart-wrap">
+		<canvas id="dev-chart"></canvas>
+	</div>
+	<input type="range" id="dev-chart-scroll" class="chart-scroll"
+		min="0" max="1000" value="1000" title="Scroll chart timeline">
+	<div class="chart-resize-handle" data-chart="dev" title="Drag to resize chart height"></div>
+	<div id="dev-list-wrap">
+		<div id="dev-groups"></div>
+	</div>
+</div>
+
+<!-- Debug overlay panel (hidden until -M web_ui_debug) -->
+<div id="tab-debug" class="overlay-panel">
+	<div class="overlay-titlebar overlay-titlebar-debug">
+		<span class="overlay-title"><span class="dbg-badge">DEBUG</span></span>
+		<button class="overlay-close" data-overlay="debug" title="Close (Esc)">&times;</button>
+	</div>
+	<div class="overlay-body">
+	<div id="dbg-bar" class="bar">
+		<span class="dbg-badge">DEBUG MODE</span>
+		<button id="dbg-refresh" class="dbg-btn">Refresh</button>
+		<button id="dbg-clear-all" class="dbg-btn">Clear All</button>
+		<button id="dbg-reset-perf" class="dbg-btn">Reset Perf</button>
+	</div>
+	<div id="dbg-wrap">
+		<div class="dbg-grid">
+			<fieldset class="dbg-section">
+				<legend>Event Injection</legend>
+				<div class="dbg-inject-row">
+					<button class="dbg-btn" data-inject="Kia-TPMS">Kia-TPMS</button>
+					<button class="dbg-btn" data-inject="Acurite-Tower">Acurite-Tower</button>
+					<button class="dbg-btn" data-inject="LaCrosse-TX141W">LaCrosse-TX141W</button>
+					<button class="dbg-btn" data-inject="Oregon-THN132N">Oregon-THN132N</button>
+					<button class="dbg-btn" data-inject="Nexus-TH">Nexus-TH</button>
+				</div>
+				<div class="field" style="margin-top:8px">
+					<label for="dbg-custom-model">Custom model</label>
+					<div class="field-row">
+						<input id="dbg-custom-model" type="text" placeholder="Model-Name">
+						<button class="dbg-btn" id="dbg-inject-custom">Inject</button>
+					</div>
+				</div>
+				<div class="field" style="margin-top:8px">
+					<label>Bulk inject</label>
+					<div class="field-row">
+						<input id="dbg-bulk-count" type="number" value="1000" min="1" style="width:80px">
+						<input id="dbg-bulk-models" type="number" value="5" min="1" max="20" style="width:60px" title="Number of models">
+						<button class="dbg-btn" id="dbg-inject-bulk">Inject Bulk</button>
+					</div>
+				</div>
+			</fieldset>
+			<fieldset class="dbg-section">
+				<legend>Benchmarks</legend>
+				<div class="dbg-inject-row">
+					<button class="dbg-btn" data-bench="1000">1K</button>
+					<button class="dbg-btn" data-bench="10000">10K</button>
+					<button class="dbg-btn" data-bench="50000">50K</button>
+					<button class="dbg-btn" id="dbg-chart-stress">Chart Stress</button>
+				</div>
+				<div class="field" style="margin-top:8px">
+					<label>Rate Simulator</label>
+					<div class="field-row">
+						<button class="dbg-btn" id="dbg-rate-sim">100 evt/s × 10s</button>
+						<button class="dbg-btn" id="dbg-rate-stop">Stop</button>
+					</div>
+				</div>
+				<pre id="dbg-bench-output">No benchmarks run yet.</pre>
+			</fieldset>
+			<fieldset class="dbg-section">
+				<legend>Performance Dashboard</legend>
+				<label style="font-size:11px;color:var(--fg2);cursor:pointer">
+					<input type="checkbox" id="dbg-auto-refresh"> Auto-refresh (1s)
+				</label>
+				<pre id="dbg-perf-output">Click Refresh to load.</pre>
+			</fieldset>
+			<fieldset class="dbg-section">
+				<legend>Memory Monitor</legend>
+				<pre id="dbg-mem-output">Click Refresh to load.</pre>
+			</fieldset>
+		</div>
+	</div>
+	</div>
+</div>
+
+<div id="dock-zone-hl" class="dock-zone-highlight"></div>
+<script src="/app.js"></script>
+</body>
+</html>

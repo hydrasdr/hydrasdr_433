@@ -1,4 +1,22 @@
 ########################################################################
+# Generate embedded web UI assets header
+########################################################################
+find_package(Python3 COMPONENTS Interpreter QUIET)
+set(WEBUI_HEADER "${CMAKE_CURRENT_SOURCE_DIR}/webui_assets.h")
+set(WEBUI_GEN "${PROJECT_SOURCE_DIR}/tools/gen_webui.py")
+file(GLOB WEBUI_SRC "${PROJECT_SOURCE_DIR}/webui/*" "${PROJECT_SOURCE_DIR}/webui/js/*.js")
+
+if(Python3_FOUND AND EXISTS "${WEBUI_GEN}")
+    add_custom_command(
+        OUTPUT "${WEBUI_HEADER}"
+        COMMAND ${Python3_EXECUTABLE} "${WEBUI_GEN}"
+        DEPENDS "${WEBUI_GEN}" ${WEBUI_SRC}
+        COMMENT "Generating embedded web UI assets"
+        VERBATIM)
+    add_custom_target(webui_assets DEPENDS "${WEBUI_HEADER}")
+endif()
+
+########################################################################
 # Build libraries and executables
 ########################################################################
 # commodity libraries
@@ -309,6 +327,10 @@ add_library(r_433 STATIC
     devices/yale_hsa.c
 )
 
+if(TARGET webui_assets)
+    add_dependencies(r_433 webui_assets)
+endif()
+
 if("${CMAKE_C_COMPILER_ID}" STREQUAL "GNU" OR "${CMAKE_C_COMPILER_ID}" MATCHES "Clang")
     # untouched upstream code, disable all warnings
     set_source_files_properties(mongoose.c PROPERTIES COMPILE_FLAGS "-w")
@@ -448,6 +470,20 @@ if(WIN32 AND HydraSDR_FOUND)
             "$<TARGET_FILE:hydrasdr>"
             "$<TARGET_FILE_DIR:hydrasdr_433>"
             COMMENT "Copying hydrasdr DLL to output directory")
+        # Copy libusb-1.0.dll (transitive dependency of libhydrasdr)
+        find_file(LIBUSB_DLL NAMES libusb-1.0.dll
+            HINTS "${CMAKE_FIND_ROOT_PATH}/bin" ENV PATH
+            NO_DEFAULT_PATH)
+        if(NOT LIBUSB_DLL)
+            find_file(LIBUSB_DLL NAMES libusb-1.0.dll)
+        endif()
+        if(LIBUSB_DLL)
+            add_custom_command(TARGET hydrasdr_433 POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${LIBUSB_DLL}"
+                "$<TARGET_FILE_DIR:hydrasdr_433>"
+                COMMENT "Copying libusb-1.0.dll to output directory")
+        endif()
     elseif(HydraSDR_DLL_DIR)
         # Using pre-built HydraSDR - copy from DLL directory
         if(EXISTS "${HydraSDR_DLL_DIR}/libhydrasdr.dll")

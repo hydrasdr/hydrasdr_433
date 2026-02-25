@@ -10,7 +10,7 @@ At startup hydrasdr_433 will read config files and parse command line arguments,
 - Analysis: Show statistics on pulses
 - Decoders: Over 290 protocols
 - Dumpers: Raw data files (cu8, cs16, cf32, ..., sr, ...)
-- Outputs: Screen (kv), JSON, CSV, MQTT, Influx, UDP (syslog), HTTP
+- Outputs: Screen (kv), JSON, CSV, MQTT, Influx, UDP (syslog), HTTP (embedded web UI)
 
 hydrasdr_433 will either acquire a live signal from an input or read a sample file with a loader.
 Then process that signal, analyse its properties (if enabled) and write the signal with dumpers (if enabled).
@@ -461,6 +461,33 @@ E.g. a UDP text payload of
 <165>1 2019-08-29T06:38:19Z raspi.fritz.box hydrasdr_433 - - - {"time":"2019-08-29 08:38:19","model":"Nexus-TH","id":42,"channel":2,"battery_ok":1,"temperature_C":20.5,"humidity":83}
 ```
 See also [RFC 5424 - The Syslog Protocol](https://tools.ietf.org/html/rfc5424#page-8)
+
+### HTTP output
+
+Use `-F http` to start the embedded HTTP server with a self-hosted web UI.
+
+The server binds to `0.0.0.0:8433` by default. Open `http://localhost:8433/` in any browser.
+
+The web UI is embedded directly in the binary as compressed assets — no internet connection,
+no external CDN, no downloaded fonts. It loads from memory in under 50 ms.
+
+Features:
+- **Monitor** — real-time scrolling event table with signal strength bars
+- **Protocols** — searchable list of all 290+ protocol decoders with enable/disable status
+- **Settings** — radio controls (frequency, gain, sample rate, PPM, hop interval) and output options
+- **Stats** — decoder statistics with auto-refresh
+- **System** — SDR device info, meta configuration, and active frequencies
+
+The UI communicates over WebSocket for live event streaming and uses a JSON command protocol
+for configuration changes. All static assets are gzip-compressed and served with
+`Content-Encoding: gzip`. See [WEBUI.md](../webui/WEBUI.md) for architecture details.
+
+Additional HTTP API endpoints:
+- `/events` — chunked JSON event stream (Server-Sent Events)
+- `/stream` — plain JSON event stream
+- `/jsonrpc` — JSON-RPC 2.0 API
+- `/cmd` — simple JSON command API
+- `/metrics` — Prometheus/OpenMetrics endpoint
 
 ### NULL output
 

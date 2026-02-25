@@ -164,7 +164,7 @@ Any number of outputs can be selected:
 - `-F syslog` send UDP messages
 - `-F trigger` puts a `1` to the given file, can be used to e.g. on a Raspberry Pi flash the LED.
 - `-F rtl_tcp` adds a rtl_tcp pass-through server.
-- `-F http` adds a HTTP API server, a UI is at e.g. http://localhost:8433/
+- `-F http` adds a HTTP API server with an embedded web UI at http://localhost:8433/
 
 Append output to file with `:<filename>` (e.g. `-F csv:log.csv`), default is to print to stdout.
 Specify host/port for `mqtt`, `influx`, `syslog`, with e.g. `-F syslog:127.0.0.1:1514`

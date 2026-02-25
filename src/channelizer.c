@@ -506,6 +506,16 @@ const char *channelizer_isa_info(void)
     return g_isa_name;
 }
 
+void channelizer_reset(channelizer_t *ch)
+{
+    if (!ch)
+        return;
+    /* Free internals but keep the struct itself alive.
+     * channelizer_free zeroes the struct, setting initialized=0
+     * so the processing loop will reinitialize on next call. */
+    channelizer_free(ch);
+}
+
 void channelizer_free(channelizer_t *ch)
 {
     if (!ch)

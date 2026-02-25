@@ -1591,7 +1591,7 @@ static void parse_conf_args(r_cfg_t *cfg, int argc, char *argv[])
  *
  * Returns 0 on success, -1 on error.
  */
-static int parse_wideband_spec(char const *arg, float *center, float *bandwidth, int *channels)
+int parse_wideband_spec(char const *arg, float *center, float *bandwidth, int *channels)
 {
     char *end;
     char buf[64];
@@ -1896,6 +1896,8 @@ static void parse_conf_option(r_cfg_t *cfg, int opt, char *arg)
         }
         else if (!strncasecmp(arg, "replay", 6))
             cfg->in_replay = atobv(arg_param(arg), 1);
+        else if (!strcasecmp(arg, "web_ui_debug"))
+            cfg->web_ui_debug = 1;
         else
             cfg->report_meta = atobv(arg, 1);
         break;

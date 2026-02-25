@@ -169,6 +169,16 @@ int channelizer_process(channelizer_t *ch, const float *input, int n_samples,
 float channelizer_get_channel_freq(channelizer_t *ch, int channel);
 
 /**
+ * Reset the channelizer for reinitialization.
+ *
+ * Frees all internal resources so the processing loop will
+ * reinitialize on the next call (ch->initialized set to 0).
+ *
+ * @param ch Channelizer context to reset
+ */
+void channelizer_reset(channelizer_t *ch);
+
+/**
  * Free all channelizer resources.
  *
  * @param ch Channelizer context to free

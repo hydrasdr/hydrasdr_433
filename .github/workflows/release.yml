@@ -28,7 +28,7 @@ jobs:
       - name: Extract version
         id: version
         run: |
-          VERSION=$(git describe --tags --exclude=nightly 2>/dev/null || echo "25.12.1-g$(git rev-parse --short HEAD)")
+          VERSION=$(git describe --tags --exclude=nightly 2>/dev/null || echo "25.12.2-g$(git rev-parse --short HEAD)")
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
             echo "is_release=true" >> "$GITHUB_OUTPUT"

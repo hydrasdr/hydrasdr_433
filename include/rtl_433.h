@@ -149,6 +149,15 @@ typedef struct r_cfg {
     struct channelizer *channelizer;    ///< PFB channelizer instance
     FILE *wb_record_file;               ///< Wideband IQ recording file handle
     char *wb_record_filename;           ///< Wideband IQ recording filename
+    int web_ui_debug;                   ///< Enable debug tab in web UI (-M web_ui_debug)
 } r_cfg_t;
+
+/**
+ * Parse wideband scanning spec: \<center\>:\<bandwidth\>[:\<channels\>]
+ * E.g. "868.5M:2M" or "868.5M:2M:8"
+ *
+ * Returns 0 on success, -1 on error.
+ */
+int parse_wideband_spec(char const *arg, float *center, float *bandwidth, int *channels);
 
 #endif /* INCLUDE_RTL_433_H_ */

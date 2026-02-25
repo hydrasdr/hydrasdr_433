@@ -14,8 +14,8 @@ Monitor an entire ISM band simultaneously with a single wideband capture.
 The `-B` option splits the RF spectrum into parallel narrowband channels, each decoded independently:
 
 ```bash
-hydrasdr_433 -B 433.92M:2M:8      # EU 433 ISM band, 8 channels over 2 MHz
-hydrasdr_433 -B 915M:8M:16        # US 915 ISM band, 16 channels over 8 MHz
+hydrasdr_433 -B 433.92M:2M:8 # EU 433 ISM band, 8 channels over 2 MHz
+hydrasdr_433 -B 915M:8M:16   # US 915 ISM band, 16 channels over 8 MHz
 ```
 
 Use `-B` when the ISM band is wider than single-frequency capture:
@@ -77,6 +77,23 @@ The 2x oversampled PFB intentionally overlaps adjacent channels so signals at th
 A lightweight FFT library optimized for the small transform sizes (2-32 points) used in the PFB channelizer.
 Stockham autosort algorithm, radix-4 with radix-2 cleanup, split real/imaginary (SoA) format for SIMD-friendly memory access.
 
+## Web UI
+
+hydrasdr_433 includes a self-hosted web UI embedded directly in the binary.
+No external CDN, no Google Fonts, no internet connection required, the entire UI loads from memory in under 50 ms.
+
+```bash
+hydrasdr_433 -F http # start with embedded web UI
+```
+
+Open `http://127.0.0.1:8433/` in any browser.
+Workspace tabs (Monitor, Devices, Syslog, Protocols, Stats, System) plus 3 overlay panels (Help, Settings, Debug) provide real-time event monitoring, device tracking with activity charts, protocol browser, radio settings, decoder statistics, and system information.
+
+Vanilla ES5 JavaScript, 12 modular source files concatenated at build time into a single IIFE.
+Total embedded size: **~52 KB** (gzipped).
+Zero external dependencies.
+Works offline.
+
 ## Supported Input Sources
 
 | Source | Library | Notes |
@@ -136,6 +153,7 @@ hydrasdr_433 -h
 | `hydrasdr_433 -A` | Pulse analyzer mode |
 | `hydrasdr_433 -S all -T 120` | Save all signals, run for 2 minutes |
 | `hydrasdr_433 -M level -M noise` | Report RSSI/SNR and noise levels |
+| `hydrasdr_433 -F http` | Web UI at http://localhost:8433/ |
 | `hydrasdr_433 -F mqtt://localhost:1883` | MQTT output |
 | `hydrasdr_433 -F json -M utc \| mosquitto_pub -t home/hydrasdr -l` | JSON via MQTT |
 
