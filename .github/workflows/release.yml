@@ -224,6 +224,7 @@ jobs:
             git ca-certificates cmake ninja-build \
             gcc g++ make pkg-config \
             libusb-1.0-0-dev libssl-dev \
+            python3 \
             ruby ruby-dev rubygems
       - uses: actions/checkout@v4
         with:
@@ -497,6 +498,7 @@ jobs:
           pacman -S --noconfirm --needed \
             git cmake ninja gcc make pkg-config \
             libusb openssl \
+            python \
             ruby
       - uses: actions/checkout@v4
         with:
@@ -536,7 +538,7 @@ jobs:
   # ──────────────────────────────────────────────────────────────────
   build-arm64:
     needs: prepare
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     name: Linux ARM64 (cross-compile)
     steps:
       - uses: actions/checkout@v4
@@ -545,10 +547,12 @@ jobs:
       - name: Install cross toolchain and deps
         run: |
           sudo dpkg --add-architecture arm64
-          # Add arm64 sources
-          sudo sed -i 's/^deb /deb [arch=amd64,i386] /' /etc/apt/sources.list
-          echo "deb [arch=arm64] http://ports.ubuntu.com/ jammy main restricted universe multiverse" | sudo tee /etc/apt/sources.list.d/arm64.list
-          echo "deb [arch=arm64] http://ports.ubuntu.com/ jammy-updates main restricted universe multiverse" | sudo tee -a /etc/apt/sources.list.d/arm64.list
+          # Pin existing sources to amd64 only (handle both DEB822 and traditional formats)
+          sudo sed -i '/^Architectures:/d; /^URIs:/i Architectures: amd64 i386' /etc/apt/sources.list.d/ubuntu.sources 2>/dev/null || \
+            sudo sed -i 's/^deb /deb [arch=amd64,i386] /' /etc/apt/sources.list
+          # Add arm64 sources from ports
+          echo "deb [arch=arm64] http://ports.ubuntu.com/ noble main restricted universe multiverse" | sudo tee /etc/apt/sources.list.d/arm64.list
+          echo "deb [arch=arm64] http://ports.ubuntu.com/ noble-updates main restricted universe multiverse" | sudo tee -a /etc/apt/sources.list.d/arm64.list
           sudo apt-get update -q -y
           sudo apt-get install -q -y --no-install-recommends \
             cmake ninja-build git \
