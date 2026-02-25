@@ -1,3 +1,16 @@
+/* ---- Cached chart font strings (avoid getComputedStyle per frame) ---- */
+var _chartFont9 = '';
+var _chartFont11 = '';
+function chartFont(size) {
+	/* Lazy-init: compute once, reuse forever */
+	if (!_chartFont9) {
+		var ff = getComputedStyle(document.body).fontFamily;
+		_chartFont9 = '9px ' + ff;
+		_chartFont11 = '11px ' + ff;
+	}
+	return size === 11 ? _chartFont11 : _chartFont9;
+}
+
 /* ---- Activity chart: event recording (dot plot) ---- */
 function recordChartEvent(ts, msg) {
 	var db = null;
@@ -12,10 +25,10 @@ function recordChartEvent(ts, msg) {
 		flagEnd: msg.flag_end === 1 ? 1 : 0
 	});
 	chartDirty = true;
-	/* Trim oldest events — single splice is O(n), while-shift is O(K×n) */
-	var excess = chartEvents.length - CHART_MAX_EVENTS;
-	if (excess > 0) {
-		chartEvents.splice(0, excess);
+	/* Trim oldest events with slack to amortize the O(n) splice cost.
+	   Only trim when CHART_TRIM_SLACK over limit, reducing frequency ~10x. */
+	if (chartEvents.length > CHART_MAX_EVENTS + CHART_TRIM_SLACK) {
+		chartEvents.splice(0, chartEvents.length - CHART_MAX_EVENTS);
 	}
 }
 
@@ -82,7 +95,7 @@ function renderActivityChart(canvas, wrap) {
 	if (len === 0) {
 		/* Empty state */
 		ctx.fillStyle = '#666';
-		ctx.font = '11px ' + getComputedStyle(document.body).fontFamily;
+		ctx.font = chartFont(11);
 		ctx.textAlign = 'center';
 		ctx.fillText('Waiting for events\u2026', w / 2, h / 2 + 4);
 		return;
@@ -113,6 +126,9 @@ function renderActivityChart(canvas, wrap) {
 	var dbMin = CHART_DB_MIN;
 	var dbMax = CHART_DB_MAX;
 
+	/* Pre-compute time→pixel factor: avoids division per dot */
+	var pxPerMs = (tMax > tMin) ? plotW / (tMax - tMin) : 0;
+
 	/* Shared params object for sub-functions */
 	var p = {
 		ctx: ctx, w: w, h: h, canvas: canvas,
@@ -120,7 +136,8 @@ function renderActivityChart(canvas, wrap) {
 		marginTop: marginTop, marginBottom: marginBottom,
 		plotW: plotW, plotH: plotH, dot: dot,
 		tMin: tMin, tMax: tMax, dbMin: dbMin, dbMax: dbMax,
-		iStart: iStart, iEnd: iEnd
+		iStart: iStart, iEnd: iEnd,
+		pxPerMs: pxPerMs
 	};
 
 	/* Build no-dB lane map (shared by sessions + dots) */
@@ -136,6 +153,14 @@ function renderActivityChart(canvas, wrap) {
 	p.laneArea = plotH - 2 * p.laneMargin;
 	p.laneStep = p.noDbCount > 1 ? p.laneArea / (p.noDbCount - 1) : 0;
 
+	/* Pre-compute Y coords for visible events — eliminates duplicate
+	   chartEventY() calls in drawChartSessions + drawChartDots */
+	for (var yi = iStart; yi < iEnd; yi++) {
+		chartEvents[yi]._cy = chartEventY(chartEvents[yi], marginTop, plotH,
+			dbMin, dbMax, p.noDbModels, p.noDbCount,
+			p.laneMargin, p.laneStep, p.laneArea);
+	}
+
 	drawChartGrid(p);
 	drawChartSessions(p);
 	drawChartDots(p);
@@ -144,7 +169,7 @@ function renderActivityChart(canvas, wrap) {
 
 function drawChartGrid(p) {
 	var ctx = p.ctx;
-	var font = '9px ' + getComputedStyle(document.body).fontFamily;
+	var font = chartFont(9);
 	ctx.strokeStyle = '#2a2a2a';
 	ctx.lineWidth = 0.5;
 	ctx.fillStyle = '#555';
@@ -252,16 +277,15 @@ function drawChartSessions(p) {
 			var sess = sessions[bs];
 			if (sess.length === 0) continue;
 			var bColor = sess[0].model ? modelColor(sess[0].model) : '#6a9955';
-			var bx1 = Math.round(p.marginLeft + ((sess[0].ts - p.tMin) / (p.tMax - p.tMin)) * p.plotW);
+			var bx1 = Math.round(p.marginLeft + (sess[0].ts - p.tMin) * p.pxPerMs);
 			var bx2 = (sess.length > 1)
-				? Math.round(p.marginLeft + ((sess[sess.length - 1].ts - p.tMin) / (p.tMax - p.tMin)) * p.plotW)
+				? Math.round(p.marginLeft + (sess[sess.length - 1].ts - p.tMin) * p.pxPerMs)
 				: bx1;
 
 			if (sess.length >= 2) {
 				var byMin = 9999, byMax = -9999;
 				for (var be = 0; be < sess.length; be++) {
-					var by = chartEventY(sess[be], p.marginTop, p.plotH, p.dbMin, p.dbMax,
-						p.noDbModels, p.noDbCount, p.laneMargin, p.laneStep, p.laneArea);
+					var by = sess[be]._cy;
 					if (by < byMin) byMin = by;
 					if (by > byMax) byMax = by;
 				}
@@ -310,9 +334,8 @@ function drawChartDots(p) {
 	ctx.globalAlpha = 0.7;
 	for (var ei = p.iStart; ei < p.iEnd; ei++) {
 		var ev = chartEvents[ei];
-		var ex = Math.round(p.marginLeft + ((ev.ts - p.tMin) / (p.tMax - p.tMin)) * p.plotW);
-		var ey = chartEventY(ev, p.marginTop, p.plotH, p.dbMin, p.dbMax,
-			p.noDbModels, p.noDbCount, p.laneMargin, p.laneStep, p.laneArea);
+		var ex = Math.round(p.marginLeft + (ev.ts - p.tMin) * p.pxPerMs);
+		var ey = ev._cy;
 		ctx.fillStyle = ev.model ? modelColor(ev.model) : '#6a9955';
 		ctx.fillRect(ex - 1, ey - 1, p.dot, p.dot);
 	}
@@ -342,7 +365,7 @@ function drawChartOverlays(p) {
 	}
 
 	/* Zoom indicator */
-	var font = '9px ' + getComputedStyle(document.body).fontFamily;
+	var font = chartFont(9);
 	ctx.fillStyle = '#555';
 	ctx.font = font;
 	ctx.textAlign = 'right';

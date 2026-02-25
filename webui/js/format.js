@@ -28,49 +28,72 @@ function formatTime(t) {
 
 /* ---- Value formatting ---- */
 
-/* Smart format keys: returns {text, html} or null if no special formatting */
-function smartFormatValue(key, val) {
+/* Smart format: O(1) lookup table dispatch.
+   Returns {text} or {dot} or null if no special formatting. */
+var VALUE_FORMATS = {
 	/* Temperature */
-	if (key === 'temperature_C') {
-		return {text: val + '\u00b0C'};
-	}
-	if (key === 'temperature_F') {
-		return {text: val + '\u00b0F'};
-	}
-	/* Humidity */
-	if (key === 'humidity') {
-		return {text: val + '%'};
-	}
+	temperature_C:   function (v) { return {text: v + '\u00b0C'}; },
+	temperature_F:   function (v) { return {text: v + '\u00b0F'}; },
+	temperature_1_C: function (v) { return {text: v + '\u00b0C'}; },
+	temperature_2_C: function (v) { return {text: v + '\u00b0C'}; },
+	temperature_3_C: function (v) { return {text: v + '\u00b0C'}; },
+	temperature_4_C: function (v) { return {text: v + '\u00b0C'}; },
+	temperature_1_F: function (v) { return {text: v + '\u00b0F'}; },
+	temperature_2_F: function (v) { return {text: v + '\u00b0F'}; },
+	setpoint_C:      function (v) { return {text: v + '\u00b0C'}; },
+	/* Humidity & moisture */
+	humidity:        function (v) { return {text: v + '%'}; },
+	humidity_1:      function (v) { return {text: v + '%'}; },
+	humidity_2:      function (v) { return {text: v + '%'}; },
+	moisture:        function (v) { return {text: v + '%'}; },
 	/* Battery */
-	if (key === 'battery_ok') {
-		return {dot: (val === 1 || val === '1') ? 'batt-ok' : 'batt-low'};
-	}
-	/* Wind speed */
-	if (key === 'wind_avg_km_h' || key === 'wind_max_km_h') {
-		return {text: val + ' km/h'};
-	}
-	if (key === 'wind_avg_m_s' || key === 'wind_max_m_s') {
-		return {text: val + ' m/s'};
-	}
-	if (key === 'wind_avg_mi_h' || key === 'wind_max_mi_h') {
-		return {text: val + ' mph'};
-	}
-	/* Wind direction */
-	if (key === 'wind_dir_deg') {
-		return {text: val + '\u00b0'};
-	}
+	battery_ok:      function (v) { return {dot: (v === 1 || v === '1') ? 'batt-ok' : 'batt-low'}; },
+	/* Wind */
+	wind_avg_km_h:   function (v) { return {text: v + ' km/h'}; },
+	wind_max_km_h:   function (v) { return {text: v + ' km/h'}; },
+	wind_avg_m_s:    function (v) { return {text: v + ' m/s'}; },
+	wind_max_m_s:    function (v) { return {text: v + ' m/s'}; },
+	wind_avg_mi_h:   function (v) { return {text: v + ' mph'}; },
+	wind_max_mi_h:   function (v) { return {text: v + ' mph'}; },
+	wind_dir_deg:    function (v) { return {text: v + '\u00b0'}; },
 	/* Rain */
-	if (key === 'rain_mm') {
-		return {text: val + ' mm'};
-	}
-	if (key === 'rain_in') {
-		return {text: val + ' in'};
-	}
+	rain_mm:         function (v) { return {text: v + ' mm'}; },
+	rain_in:         function (v) { return {text: v + ' in'}; },
+	rain_rate_mm_h:  function (v) { return {text: v + ' mm/h'}; },
+	rain_rate_in_h:  function (v) { return {text: v + ' in/h'}; },
 	/* Pressure */
-	if (key === 'pressure_hPa') {
-		return {text: val + ' hPa'};
-	}
-	return null;
+	pressure_hPa:    function (v) { return {text: v + ' hPa'}; },
+	pressure_kPa:    function (v) { return {text: v + ' kPa'}; },
+	pressure_PSI:    function (v) { return {text: v + ' PSI'}; },
+	pressure_bar:    function (v) { return {text: v + ' bar'}; },
+	/* Light & UV */
+	light_lux:       function (v) { return {text: v + ' lux'}; },
+	light_klx:       function (v) { return {text: v + ' klx'}; },
+	uvi:             function (v) { return {text: v + ' UV'}; },
+	uv_index:        function (v) { return {text: v + ' UV'}; },
+	/* Energy & power */
+	power_W:         function (v) { return {text: v + ' W'}; },
+	energy_kWh:      function (v) { return {text: v + ' kWh'}; },
+	current_A:       function (v) { return {text: v + ' A'}; },
+	voltage_V:       function (v) { return {text: v + ' V'}; },
+	/* Air quality */
+	co2_ppm:         function (v) { return {text: v + ' ppm'}; },
+	hcho_ppb:        function (v) { return {text: v + ' ppb'}; },
+	pm1_ug_m3:       function (v) { return {text: v + ' \u00b5g/m\u00b3'}; },
+	pm2_5_ug_m3:     function (v) { return {text: v + ' \u00b5g/m\u00b3'}; },
+	pm4_ug_m3:       function (v) { return {text: v + ' \u00b5g/m\u00b3'}; },
+	pm10_ug_m3:      function (v) { return {text: v + ' \u00b5g/m\u00b3'}; },
+	pm10_0_ug_m3:    function (v) { return {text: v + ' \u00b5g/m\u00b3'}; },
+	/* Volume & depth */
+	depth_cm:        function (v) { return {text: v + ' cm'}; },
+	volume_m3:       function (v) { return {text: v + ' m\u00b3'}; },
+	/* Distance (lightning/storm) */
+	storm_dist:      function (v) { return {text: v + ' km'}; },
+	strike_distance: function (v) { return {text: v + ' km'}; }
+};
+function smartFormatValue(key, val) {
+	var fn = VALUE_FORMATS[key];
+	return fn ? fn(val) : null;
 }
 
 /* ---- Unit-aware value parser ---- */
@@ -132,14 +155,18 @@ function fmtStatValue(key, value) {
 	return String(v);
 }
 
-/* ---- Model color coding ---- */
+/* ---- Model color coding (cached) ---- */
+var _colorCache = {};
 function modelColor(name) {
+	if (_colorCache[name]) return _colorCache[name];
 	var hash = 0;
 	for (var i = 0; i < name.length; i++) {
 		hash = name.charCodeAt(i) + ((hash << 5) - hash);
 	}
 	var hue = ((hash % 360) + 360) % 360;
-	return 'hsl(' + hue + ', 55%, 65%)';
+	var c = 'hsl(' + hue + ', 55%, 65%)';
+	_colorCache[name] = c;
+	return c;
 }
 
 /* ---- Signal bar ---- */
@@ -151,13 +178,16 @@ function sigPct(db) {
 }
 
 /* Build a signal-strength bar element from a message's rssi/snr.
-   Returns a span element or null if level display is off / no signal data. */
+   Returns a span element or null if level display is off / no signal data.
+   Uses cloneNode from a cached template for faster hot-path creation. */
+var _sigBarTpl = null;
 function buildSigBar(msg) {
 	if (!showMetaLevel) return null;
 	var sigVal = msg.rssi !== undefined ? msg.rssi : msg.snr;
 	if (sigVal === undefined) return null;
+	if (!_sigBarTpl) _sigBarTpl = document.createElement('span');
 	var pct = sigPct(sigVal);
-	var bar = document.createElement('span');
+	var bar = _sigBarTpl.cloneNode(false);
 	bar.className = 'sig-bar ' + (pct > 60 ? 'sig-hi' : pct > 30 ? 'sig-mid' : 'sig-lo');
 	bar.style.width = Math.max(4, (pct * 0.6) | 0) + 'px';
 	bar.title = sigVal + ' dB';
@@ -198,6 +228,23 @@ function getVisibleKeys(msg) {
 		if (!showMetaProto && k === META_PROTO_KEY) continue;
 		if (!showMetaDesc && k === META_DESC_KEY) continue;
 		keys.push(k);
+	}
+	return keys;
+}
+
+/* Collect the union of visible data keys across an array of events.
+   Returns an ordered array of key names (order of first appearance). */
+function getVisibleEventKeys(events) {
+	var seen = {};
+	var keys = [];
+	for (var i = 0; i < events.length; i++) {
+		var vk = getVisibleKeys(events[i]);
+		for (var j = 0; j < vk.length; j++) {
+			if (!seen[vk[j]]) {
+				seen[vk[j]] = 1;
+				keys.push(vk[j]);
+			}
+		}
 	}
 	return keys;
 }

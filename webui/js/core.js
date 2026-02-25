@@ -24,6 +24,7 @@ var reconnectCount = 0;
 var eventCount = 0;
 var rowCount = 0;
 var rpcQueue = [];
+var rpcQueueHead = 0;  /* index-based dequeue: avoids O(n) shift */
 var metaCache = null;
 var protoList = [];
 var statsTimer = null;
@@ -36,8 +37,12 @@ var pausedEvents = [];  /* buffered events while paused — replayed on resume *
 /* ---- Event filter state ---- */
 var monFilterStr = '';
 
-/* ---- Event rate tracking ---- */
-var rateWindow = [];
+/* ---- Event rate tracking (O(1) bucket counter) ---- */
+var RATE_BUCKET_MS = 500;
+var RATE_BUCKET_COUNT = 10;  /* RATE_WINDOW_MS / RATE_BUCKET_MS */
+var rateBuckets = [0,0,0,0,0,0,0,0,0,0];
+var rateBucketIdx = 0;
+var rateBucketTs = 0;
 var rateTimerId = null;
 
 /* ---- Device registry state ---- */
@@ -53,6 +58,7 @@ var DEVICE_DETAIL_PAGE = 20;
 var devicesTabActive = false;
 var devRafId = 0;
 var devActiveKeys = {};    /* key → timestamp of last update, for green flash */
+var devActiveCount = 0;    /* approximate size of devActiveKeys for purge trigger */
 var DEV_FLASH_MS = 3000;   /* duration of green flash persistence */
 
 /* ---- Activity chart state (dot plot) ---- */
@@ -62,6 +68,7 @@ var CHART_DB_MIN = -36;            /* Y-axis dB floor */
 var CHART_DB_MAX = 0;              /* Y-axis dB ceiling */
 var CHART_DOT_SIZE = 4;            /* dot size in CSS pixels */
 var CHART_SESSION_GAP_MS = 2000;   /* gap threshold for session bands */
+var CHART_TRIM_SLACK = 200;        /* over-fill before trimming (amortizes O(n) splice) */
 var chartEvents = [];              /* [{ts, db, model, id, flagStart, flagEnd}] — oldest first */
 var chartDirty = true;             /* set when chart data changes; cleared after render */
 var devGroupsDirty = false;        /* set when device groups need re-sorting */
@@ -107,6 +114,7 @@ var OVERLAY_NAMES = ['help', 'settings', 'debug'];
 /* ---- rAF event batching ---- */
 var pendingEvents = [];
 var rafId = 0;
+var hiddenBatch = [];  /* events accumulated while document.hidden — flushed on visibility */
 
 /* ---- Client performance metrics ---- */
 var perfMetrics = {
@@ -132,6 +140,15 @@ var devGroupOrder = [];  /* ordered model names */
 /* ---- Monitor column sorting ---- */
 var monSortCol = null;  /* null = arrival order, or 'time'|'model'|'id' */
 var monSortAsc = true;
+
+/* ---- Protocol column sorting ---- */
+var protoSortCol = null;   var protoSortAsc = true;
+
+/* ---- Syslog column sorting ---- */
+var syslogSortCol = null;  var syslogSortAsc = true;
+
+/* ---- Stats column sorting (persists across 10s refresh) ---- */
+var statsSortState = {};   /* label → {col, asc} */
 
 /* ---- Display filter state (synced with report meta checkboxes) ---- */
 var META_SIGNAL_KEYS = {rssi:1, snr:1, noise:1, rssi_dB:1, snr_dB:1};
@@ -176,14 +193,13 @@ function freeRow(tr) {
 
 /* ---- DOM helpers ---- */
 var $ = function (id) { return document.getElementById(id); };
-function hasClass(e, c) { return e.className && e.className.indexOf(c) !== -1; }
-function addClass(e, c) { if (!hasClass(e, c)) e.className = (e.className ? e.className + ' ' : '') + c; }
-function removeClass(e, c) { e.className = e.className.replace(new RegExp('\\s*\\b' + c + '\\b', 'g'), '').trim(); }
+function hasClass(e, c) { return e.classList.contains(c); }
+function addClass(e, c) { e.classList.add(c); }
+function removeClass(e, c) { e.classList.remove(c); }
 function toggleClass(e, c, force) {
-	var has = hasClass(e, c);
-	if (force === undefined) force = !has;
-	if (force && !has) addClass(e, c);
-	else if (!force && has) removeClass(e, c);
+	if (force === undefined) e.classList.toggle(c);
+	else if (force) e.classList.add(c);
+	else e.classList.remove(c);
 }
 function mkEl(tag, cls, text) {
 	var n = document.createElement(tag);
@@ -196,6 +212,8 @@ function prependChild(parent, node) {
 	else parent.appendChild(node);
 }
 function pluralize(n, s, p) { return n + ' ' + (n === 1 ? s : (p || s + 's')); }
+function _identity(x) { return x; }
+function _lastEvent(d) { return d.lastEvent; }
 function bindAll(sel, evt, fn) {
 	var a = document.querySelectorAll(sel);
 	for (var i = 0; i < a.length; i++) a[i].addEventListener(evt, fn);
@@ -237,10 +255,6 @@ var elDevChartScroll = $('dev-chart-scroll');
 var elDbgTabBtn = $('tab-btn-debug');
 var elDbgCheckbox = $('s-debug-enable');
 var elSettingsTabBtn = $('tab-btn-settings');
-var elSyslogTabBtn = $('tab-btn-syslog');
-var elProtocolsTabBtn = $('tab-btn-protocols');
-var elStatsTabBtn = $('tab-btn-stats');
-var elSystemTabBtn = $('tab-btn-system');
 var elHelpTabBtn = $('tab-btn-help');
 var elDockZoneHl = $('dock-zone-hl');
 
@@ -254,7 +268,6 @@ var SETTINGS_GUARD_MS = 2000;
 
 /* ---- Device render tracking ---- */
 var devPrevKeys = null;  /* stringified sorted key order from last render */
-var devPrevCount = 0;
 
 /* ---- Chart resize drag state ---- */
 var chartResizeDrag = null; /* {target, startY, startHeight, wrapEl} */
@@ -262,3 +275,49 @@ var chartResizeDrag = null; /* {target, startY, startHeight, wrapEl} */
 /* ---- Sort indicator constants ---- */
 var SORT_ASC = '\u25b2';  /* ▲ */
 var SORT_DESC = '\u25bc'; /* ▼ */
+
+/* ---- Shared sort helpers ---- */
+
+/* Update sort indicators on all th.sortable within a container.
+   attr defaults to 'data-sort' (override with 'data-dev-sort' for devices). */
+function updateSortIndicators(container, col, asc, attr) {
+	attr = attr || 'data-sort';
+	var ths = container.querySelectorAll('th.sortable');
+	for (var i = 0; i < ths.length; i++) {
+		var th = ths[i];
+		var ind = th.querySelector('.sort-ind');
+		if (th.getAttribute(attr) === col) {
+			addClass(th, 'sort-active');
+			if (ind) ind.textContent = asc ? SORT_ASC : SORT_DESC;
+		} else {
+			removeClass(th, 'sort-active');
+			if (ind) ind.textContent = '';
+		}
+	}
+}
+
+/* 3-cycle sort state: asc → desc → reset.
+   Returns {col, asc}. Default reset is {null, true}. */
+function cycleSortState(curCol, curAsc, clicked, defCol, defAsc) {
+	if (curCol === clicked) {
+		if (curAsc) return {col: clicked, asc: false};
+		return {col: defCol !== undefined ? defCol : null,
+			asc: defAsc !== undefined ? defAsc : true};
+	}
+	return {col: clicked, asc: true};
+}
+
+/* Generic value comparator: handles numbers, strings, and mixed types.
+   Returns negative/0/positive like standard compare functions.
+   Pass asc=true for ascending, false for descending. */
+function compareValues(a, b, asc) {
+	var cmp;
+	if (typeof a === 'number' && typeof b === 'number') {
+		cmp = a - b;
+	} else {
+		a = String(a === undefined || a === null ? '' : a).toLowerCase();
+		b = String(b === undefined || b === null ? '' : b).toLowerCase();
+		cmp = a < b ? -1 : a > b ? 1 : 0;
+	}
+	return asc ? cmp : -cmp;
+}

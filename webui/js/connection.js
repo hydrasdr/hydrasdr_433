@@ -1,20 +1,37 @@
-/* ---- Event rate tracking ---- */
-function recordEventRate(count) {
-	var now = Date.now();
-	for (var i = 0; i < count; i++) {
-		rateWindow.push(now);
+/* ---- Event rate tracking (O(1) bucket counter) ---- */
+/* Uses RATE_BUCKET_COUNT fixed buckets of RATE_BUCKET_MS each.
+   recordEventRate: O(1) per call — increment current bucket.
+   calcRate: O(RATE_BUCKET_COUNT) — sum all buckets. */
+
+function advanceRateBuckets(now) {
+	if (rateBucketTs === 0) { rateBucketTs = now; return; }
+	var elapsed = now - rateBucketTs;
+	if (elapsed < RATE_BUCKET_MS) return;
+	var steps = Math.floor(elapsed / RATE_BUCKET_MS);
+	if (steps >= RATE_BUCKET_COUNT) {
+		/* Entire window elapsed — clear all */
+		for (var i = 0; i < RATE_BUCKET_COUNT; i++) rateBuckets[i] = 0;
+		rateBucketIdx = 0;
+		rateBucketTs = now;
+		return;
 	}
+	for (var s = 0; s < steps; s++) {
+		rateBucketIdx = (rateBucketIdx + 1) % RATE_BUCKET_COUNT;
+		rateBuckets[rateBucketIdx] = 0;
+	}
+	rateBucketTs += steps * RATE_BUCKET_MS;
+}
+
+function recordEventRate(count) {
+	advanceRateBuckets(Date.now());
+	rateBuckets[rateBucketIdx] += count;
 }
 
 function calcRate() {
-	var now = Date.now();
-	var cutoff = now - RATE_WINDOW_MS;
-	/* Prune old timestamps */
-	while (rateWindow.length > 0 && rateWindow[0] < cutoff) {
-		rateWindow.shift();
-	}
-	if (rateWindow.length === 0) return 0;
-	return rateWindow.length / (RATE_WINDOW_MS / 1000);
+	advanceRateBuckets(Date.now());
+	var total = 0;
+	for (var i = 0; i < RATE_BUCKET_COUNT; i++) total += rateBuckets[i];
+	return total / (RATE_WINDOW_MS / 1000);
 }
 
 function updateRateDisplay() {
@@ -28,6 +45,23 @@ function startRateTimer() {
 	rateTimerId = setInterval(updateRateDisplay, 500);
 }
 
+/* SDR broadcast keys — hoisted to avoid per-message recreation */
+var BROADCAST_KEYS = {center_frequency:1, frequencies:1, sample_rate:1, freq_correction:1};
+
+/* ---- RPC queue helpers (O(1) dequeue) ---- */
+function rpcHasCallbacks() { return rpcQueueHead < rpcQueue.length; }
+function rpcDequeue() {
+	if (rpcQueueHead >= rpcQueue.length) return null;
+	var cb = rpcQueue[rpcQueueHead];
+	rpcQueue[rpcQueueHead++] = null;  /* release reference */
+	/* Compact when half consumed */
+	if (rpcQueueHead > 16 && rpcQueueHead > rpcQueue.length / 2) {
+		rpcQueue = rpcQueue.slice(rpcQueueHead);
+		rpcQueueHead = 0;
+	}
+	return cb;
+}
+
 /* ---- WebSocket ---- */
 function connect() {
 	var proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -39,7 +73,7 @@ function connect() {
 		reconnectDelay = RECONNECT_BASE_MS;
 		reconnectCount = 0;
 		gotInitialMeta = false;
-		rpcQueue = []; /* clear any stale callbacks */
+		rpcQueue = []; rpcQueueHead = 0; /* clear any stale callbacks */
 		/* Force all report options ON so server always sends full data */
 		forceServerReportMeta();
 		/* Delay queries so auto-sent data (meta + history) arrives
@@ -111,8 +145,8 @@ function connect() {
 
 		/* RPC response with explicit result/error — always dequeue */
 		if (msg.result !== undefined || msg.error !== undefined) {
-			if (rpcQueue.length > 0) {
-				var cb = rpcQueue.shift();
+			if (rpcHasCallbacks()) {
+				var cb = rpcDequeue();
 				if (msg.result !== undefined) cb(msg.result, null);
 				else cb(null, msg.error);
 			}
@@ -124,7 +158,6 @@ function connect() {
 		   center_frequency, frequencies, sample_rate, freq_correction.
 		   Raw RPC responses (get_meta, get_stats, get_protocols,
 		   get_dev_info) contain other keys. */
-		var BROADCAST_KEYS = {center_frequency:1, frequencies:1, sample_rate:1, freq_correction:1};
 		var isBroadcast = true;
 		for (var bk in msg) {
 			if (msg.hasOwnProperty(bk) && !BROADCAST_KEYS[bk]) {
@@ -148,8 +181,8 @@ function connect() {
 		}
 
 		/* Raw RPC response (ret_code=1) — dequeue callback */
-		if (rpcQueue.length > 0) {
-			var cb2 = rpcQueue.shift();
+		if (rpcHasCallbacks()) {
+			var cb2 = rpcDequeue();
 			cb2(msg, null);
 			return;
 		}

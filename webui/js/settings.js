@@ -133,3 +133,178 @@ function refreshMeta() {
 		}
 	});
 }
+
+/* ---- Gain mode state ---- */
+var gainMode = 'auto'; /* 'auto' | 'linearity' | 'sensitivity' */
+
+function selectGainMode(mode) {
+	gainMode = mode;
+	var btns = document.querySelectorAll('.btn-gain');
+	for (var i = 0; i < btns.length; i++)
+		toggleClass(btns[i], 'active', btns[i].getAttribute('data-gain-mode') === mode);
+	$('s-gain').disabled = (mode === 'auto');
+	if (mode === 'auto') $('s-gain').value = '';
+}
+
+/* Mode button click */
+bindAll('.btn-gain', 'click', function (e) {
+	selectGainMode(e.currentTarget.getAttribute('data-gain-mode'));
+});
+
+/* ---- Apply buttons, presets, enter-key ---- */
+
+var applyHandlers = {
+	freq: function () {
+		var raw = $('s-freq').value.trim();
+		var hz;
+		/* Try unit-aware parse first (handles 868.5M, 433k, etc.) */
+		var parsed = parseValueWithUnit(raw);
+		if (!isNaN(parsed) && parsed > 0) {
+			hz = Math.round(parsed);
+			/* If bare number < 10000, assume MHz (e.g. "433.92" → 433920000) */
+			if (hz < 10000) hz = Math.round(parseFloat(raw) * 1e6);
+		} else {
+			return;
+		}
+		/* Guard: don't let refreshMeta overwrite this field */
+		guardSetting('freq');
+		/* Immediate local update for instant feedback */
+		if (metaCache) {
+			metaCache.center_frequency = hz;
+			if (metaCache.frequencies) metaCache.frequencies[0] = hz;
+		}
+		updateHeaderFromMeta(metaCache);
+		rpc('center_frequency', {val: hz}, function () { refreshMeta(); refreshStats(); });
+	},
+	gain: function () {
+		var arg;
+		if (gainMode === 'auto') {
+			arg = '0';
+		} else {
+			var v = $('s-gain').value.trim();
+			if (v === '') return;
+			arg = gainMode + '=' + v;
+		}
+		rpc('gain', {arg: arg}, function () { refreshMeta(); });
+	},
+	srate: function () {
+		var raw = $('s-srate').value.trim();
+		var hz = parseValueWithUnit(raw);
+		/* If bare number without suffix and small, assume it's meant as-is (Hz) */
+		if (isNaN(hz) || hz <= 0) return;
+		hz = Math.round(hz);
+		/* Guard: don't let refreshMeta overwrite this field */
+		guardSetting('srate');
+		if (metaCache) metaCache.samp_rate = hz;
+		updateHeaderFromMeta(metaCache);
+		rpc('sample_rate', {val: hz}, function () { refreshMeta(); refreshStats(); });
+	},
+	ppm: function () {
+		var v = parseInt($('s-ppm').value, 10);
+		rpc('ppm_error', {val: v});
+	},
+	hop: function () {
+		var v = parseInt($('s-hop').value, 10);
+		if (v >= 0) rpc('hop_interval', {val: v});
+	},
+	convert: function () {
+		var v = parseInt($('s-convert').value, 10);
+		rpc('convert', {val: v});
+	},
+	verbosity: function () {
+		var v = parseInt($('s-verbosity').value, 10);
+		rpc('verbosity', {val: v});
+	},
+	wideband: function () {
+		var v = $('s-wideband').value.trim();
+		if (v !== '') rpc('wideband', {arg: v}, function () { refreshMeta(); });
+	}
+};
+
+bindAll('.btn-apply', 'click', function (e) {
+	var key = e.currentTarget.getAttribute('data-apply');
+	if (applyHandlers[key]) applyHandlers[key]();
+});
+
+/* ---- Frequency, Sample Rate & Wideband Presets ---- */
+bindAll('.btn-preset', 'click', function (e) {
+	var btn = e.currentTarget;
+	var freq = btn.getAttribute('data-freq');
+	if (freq) {
+		$('s-freq').value = freq;
+		applyHandlers.freq();
+		return;
+	}
+	var sr = btn.getAttribute('data-srate');
+	if (sr) {
+		$('s-srate').value = fmtSrate(parseInt(sr, 10));
+		applyHandlers.srate();
+		return;
+	}
+	var wb = btn.getAttribute('data-wideband');
+	if (wb) {
+		$('s-wideband').value = (wb === 'off') ? '' : wb;
+		rpc('wideband', {arg: wb}, function () { refreshMeta(); });
+	}
+});
+
+/* ---- Enter Key for Apply ---- */
+bindAll('.field-row input, .field-row select', 'keydown', function (e) {
+	if (e.keyCode === 13) {
+		e.preventDefault();
+		var row = e.currentTarget.parentNode;
+		if (!row) return;
+		var btn = row.querySelector('.btn-apply');
+		if (!btn) return;
+		var key = btn.getAttribute('data-apply');
+		if (key && applyHandlers[key]) applyHandlers[key]();
+	}
+});
+
+/* ---- Report meta checkboxes — display-only (server always sends full data) ---- */
+var metaToggles = [
+	['s-meta-level', 'level'],
+	['s-meta-bits', 'bits'],
+	['s-meta-proto', 'protocol'],
+	['s-meta-desc', 'description'],
+	['s-meta-hires', 'hires']
+];
+for (var mi = 0; mi < metaToggles.length; mi++) {
+	(function (id, arg) {
+		$(id).addEventListener('change', function () {
+			if (arg === 'level')       showMetaLevel = this.checked;
+			else if (arg === 'bits')   showMetaBits = this.checked;
+			else if (arg === 'protocol') showMetaProto = this.checked;
+			else if (arg === 'description') showMetaDesc = this.checked;
+			else if (arg === 'hires') showMetaHires = this.checked;
+			/* Mark all groups dirty for full re-render */
+			var gm;
+			for (gm in monGroups) {
+				if (monGroups.hasOwnProperty(gm)) monGroups[gm].needsRebuild = true;
+			}
+			for (gm in devGroups) {
+				if (devGroups.hasOwnProperty(gm)) devGroups[gm].needsRebuild = true;
+			}
+			reRenderMonitorRows();
+			reRenderDeviceRows();
+			reRenderSyslogRows();
+		});
+	})(metaToggles[mi][0], metaToggles[mi][1]);
+}
+
+/* Bias-T checkbox */
+$('s-biastee').addEventListener('change', function () {
+	rpc('biastee', {val: this.checked ? 1 : 0});
+});
+
+/* ---- Debug enable checkbox in Settings → Advanced ---- */
+if (elDbgCheckbox) {
+	elDbgCheckbox.addEventListener('change', function () {
+		debugEnabled = elDbgCheckbox.checked;
+		if (elDbgTabBtn) elDbgTabBtn.style.display = debugEnabled ? '' : 'none';
+		/* If disabling and debug panel is open, close it */
+		if (!debugEnabled && overlayPanels.debug && overlayPanels.debug.open) {
+			toggleOverlay('debug');
+		}
+	});
+}

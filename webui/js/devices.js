@@ -31,13 +31,23 @@ function updateDeviceRegistry(msg) {
 	dev.lastSeenTs = nowTs;
 	dev.count++;
 	dev.lastEvent = msg;
-	dev.events.unshift(msg);
+	dev.events.push(msg);  /* O(1) amortized; newest at end */
 	if (dev.events.length > MAX_DEVICE_EVENTS) {
-		dev.events.length = MAX_DEVICE_EVENTS;
+		dev.events.splice(0, dev.events.length - MAX_DEVICE_EVENTS);
 	}
 
-	/* Mark as recently active for green flash */
+	/* Mark as recently active for green flash.
+	   Purge stale entries if map grows too large (Devices tab not active). */
 	devActiveKeys[key] = nowTs;
+	if (++devActiveCount > 500) {
+		var cutoff = nowTs - DEV_FLASH_MS;
+		for (var ak in devActiveKeys) {
+			if (devActiveKeys[ak] < cutoff) {
+				delete devActiveKeys[ak];
+				devActiveCount--;
+			}
+		}
+	}
 
 	/* Record event in activity chart */
 	recordChartEvent(nowTs, msg);
@@ -79,31 +89,22 @@ function getSortedDeviceKeys() {
 	keys.sort(function (a, b) {
 		var da = deviceRegistry[a];
 		var db = deviceRegistry[b];
-		var va, vb, cmp;
+		var va, vb;
 		if (col === 'seen') {
-			va = da.lastSeenTs;
-			vb = db.lastSeenTs;
-			cmp = va - vb;
+			va = da.lastSeenTs; vb = db.lastSeenTs;
 		} else if (col === 'model') {
-			va = da.model.toLowerCase();
-			vb = db.model.toLowerCase();
-			cmp = va < vb ? -1 : va > vb ? 1 : 0;
+			va = da.model; vb = db.model;
 		} else if (col === 'id') {
 			var na = parseInt(da.id, 10);
 			var nb = parseInt(db.id, 10);
-			if (!isNaN(na) && !isNaN(nb)) {
-				cmp = na - nb;
-			} else {
-				va = da.id.toLowerCase();
-				vb = db.id.toLowerCase();
-				cmp = va < vb ? -1 : va > vb ? 1 : 0;
-			}
+			va = isNaN(na) ? da.id : na;
+			vb = isNaN(nb) ? db.id : nb;
 		} else if (col === 'count') {
-			cmp = da.count - db.count;
+			va = da.count; vb = db.count;
 		} else {
-			cmp = 0;
+			return 0;
 		}
-		return asc ? cmp : -cmp;
+		return compareValues(va, vb, asc);
 	});
 
 	return keys;
@@ -210,7 +211,7 @@ function renderDeviceList() {
 		latestTs[model] = maxTs;
 
 		/* Update data columns */
-		if (updateDevGroupDataKeys(group, devs)) {
+		if (updateGroupDataKeys(group, devs, _lastEvent)) {
 			rebuildGroupColumns(group);
 			needFullRebuild = true; /* columns changed, force rebuild */
 		}
@@ -264,7 +265,6 @@ function renderDeviceList() {
 	}
 
 	devPrevKeys = keysStr;
-	devPrevCount = keys.length;
 	elDevListWrap.scrollTop = scrollTop;
 
 	elDevCount.textContent = pluralize(deviceCount, 'device') +
@@ -417,9 +417,11 @@ function toggleDeviceDetail(key, parentTr) {
 	evtTable.appendChild(thead);
 
 	var tbody = document.createElement('tbody');
+	/* Events are stored oldest-first (push order); display newest-first */
 	var showCount = Math.min(dev.events.length, DEVICE_DETAIL_PAGE);
+	var evtStart = dev.events.length - 1;
 	for (var i = 0; i < showCount; i++) {
-		tbody.appendChild(buildEvtColumnarRow(dev.events[i], dataKeys));
+		tbody.appendChild(buildEvtColumnarRow(dev.events[evtStart - i], dataKeys));
 	}
 
 	/* "Show more" row for paginated event history */
@@ -437,8 +439,9 @@ function toggleDeviceDetail(key, parentTr) {
 			var shown = moreTr._devEvtShown;
 			var keys = moreTr._dataKeys;
 			var next = Math.min(dev.events.length, shown + DEVICE_DETAIL_PAGE);
+			var base = dev.events.length - 1;
 			for (var j = shown; j < next; j++) {
-				tbody.insertBefore(buildEvtColumnarRow(dev.events[j], keys), moreTr);
+				tbody.insertBefore(buildEvtColumnarRow(dev.events[base - j], keys), moreTr);
 			}
 			moreTr._devEvtShown = next;
 			if (next >= dev.events.length) {
@@ -525,19 +528,7 @@ function refreshInlineDetail() {
 function updateDevSortIndicators() {
 	for (var model in devGroups) {
 		if (!devGroups.hasOwnProperty(model)) continue;
-		var ths = devGroups[model].theadTr.querySelectorAll('th.sortable');
-		for (var i = 0; i < ths.length; i++) {
-			var th = ths[i];
-			var col = th.getAttribute('data-dev-sort');
-			var ind = th.querySelector('.sort-ind');
-			if (col === devSortCol) {
-				th.classList.add('sort-active');
-				if (ind) ind.textContent = devSortAsc ? SORT_ASC : SORT_DESC;
-			} else {
-				th.classList.remove('sort-active');
-				if (ind) ind.textContent = '';
-			}
-		}
+		updateSortIndicators(devGroups[model].theadTr, devSortCol, devSortAsc, 'data-dev-sort');
 	}
 }
 
@@ -588,23 +579,6 @@ function reRenderDeviceRows() {
 	perfMetrics.lastReRenderDevMs = performance.now() - t0;
 }
 
-/* Collect the union of visible data keys across a device's events.
-   Returns an ordered array of key names (order of first appearance). */
-function getVisibleEventKeys(events) {
-	var seen = {};
-	var keys = [];
-	for (var i = 0; i < events.length; i++) {
-		var vk = getVisibleKeys(events[i]);
-		for (var j = 0; j < vk.length; j++) {
-			if (!seen[vk[j]]) {
-				seen[vk[j]] = 1;
-				keys.push(vk[j]);
-			}
-		}
-	}
-	return keys;
-}
-
 /* CSV Export (Devices) */
 function exportDevicesCSV() {
 	var keys = getSortedDeviceKeys();
@@ -622,7 +596,7 @@ function exportDevicesCSV() {
 			csvEscape(dev.count)
 		].join(','));
 	}
-	downloadCSV('hydrasdr_devices.csv', lines.join('\n'));
+	downloadCSV('hydrasdr_433_devices.csv', lines.join('\n'));
 }
 $('dev-export').addEventListener('click', exportDevicesCSV);
 

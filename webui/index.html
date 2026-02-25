@@ -56,10 +56,10 @@
 	<div id="proto-wrap">
 		<table id="proto-table">
 			<thead><tr>
-				<th class="col-num">#</th>
-				<th class="col-name">Name</th>
-				<th class="col-mod">Mod</th>
-				<th class="col-en">Enabled</th>
+				<th class="col-num sortable" data-sort="num"># <span class="sort-ind"></span></th>
+				<th class="col-name sortable" data-sort="name">Name <span class="sort-ind"></span></th>
+				<th class="col-mod sortable" data-sort="mod">Mod <span class="sort-ind"></span></th>
+				<th class="col-en sortable" data-sort="en">Enabled <span class="sort-ind"></span></th>
 			</tr></thead>
 			<tbody id="proto-body"></tbody>
 		</table>
@@ -243,15 +243,15 @@
 				<dt>Monitor</dt>
 				<dd>Live event stream with activity chart. Events grouped by model, each with sortable columns. Includes real-time event rate, filter, pause, and CSV export.</dd>
 				<dt>Devices</dt>
-				<dd>Unique device registry. Groups devices by model + ID, shows activity chart, last-seen time, and event count. Click a device to expand its event history. Devices are tracked even when the Monitor is paused.</dd>
+				<dd>Unique device registry. Groups devices by model + ID, shows activity chart, last-seen time, and event count. Sortable columns. Click a device to expand its event history. Devices are tracked even when the Monitor is paused.</dd>
 				<dt>Syslog</dt>
-				<dd>Server log messages color-coded by severity (FATAL, ERROR, WARNING, INFO, etc.). Filterable by text content.</dd>
+				<dd>Server log messages color-coded by severity (FATAL, ERROR, WARNING, INFO, etc.). Filterable and sortable by column.</dd>
 				<dt>Protocols</dt>
-				<dd>All supported protocol decoders with modulation type (OOK/FSK) and enabled status. Click to expand signal parameters and output fields.</dd>
+				<dd>All supported protocol decoders with modulation type (OOK/FSK) and enabled status. Sortable columns. Click to expand signal parameters and output fields.</dd>
 				<dt>Settings</dt>
 				<dd>Draggable floating overlay for radio configuration (frequency, gain, sample rate, PPM, hop interval) with presets, and display-only report option toggles. Stays visible while other tabs are active.</dd>
 				<dt>Stats</dt>
-				<dd>Server decoder statistics and client performance metrics. Auto-refreshes every 10 seconds.</dd>
+				<dd>Server decoder statistics and client performance metrics with sortable columns. Auto-refreshes every 10 seconds.</dd>
 				<dt>System</dt>
 				<dd>SDR hardware info, configuration snapshot, channelizer status (wideband mode), and frequency list.</dd>
 				<dt>Help</dt>
@@ -330,7 +330,9 @@
 				<dt>Search</dt>
 				<dd>Type in the search box (or press <kbd>D</kbd>) to filter devices by model name or ID.</dd>
 				<dt>Device List</dt>
-				<dd>Shows ID, last-seen time, event count, and latest data values. Rows flash green for 3 seconds when new data arrives. Click column headers to sort.</dd>
+				<dd>Shows ID, last-seen time, event count, and latest data values. Rows flash green for 3 seconds when new data arrives.</dd>
+				<dt>Sort</dt>
+				<dd>Click column headers (ID, Last Seen, Count, or any data column) to sort within each group. First click sorts ascending, second click descending, third click returns to default order.</dd>
 				<dt>Device Detail</dt>
 				<dd>Click a device row to expand its summary (model, ID, first/last seen, event count) and paginated event history (20 per page, up to 200 stored). Click any event row to expand all fields. Click the device row again or press <kbd>Esc</kbd> to collapse.</dd>
 				<dt>Export CSV</dt>
@@ -346,8 +348,12 @@
 				<dd>Shows server log messages with timestamp, source component, severity level, and message text. Up to 200 entries are retained.</dd>
 				<dt>Severity Colors</dt>
 				<dd>FATAL/CRITICAL: red background. ERROR: red text. WARNING: orange. NOTICE: blue. INFO: gray. DEBUG/TRACE: dark gray.</dd>
+				<dt>Sort</dt>
+				<dd>Click column headers (Time, Source, Level, Message) to sort. First click sorts ascending, second click descending, third click returns to arrival order. New entries appear in correct sorted position when sort is active.</dd>
 				<dt>Filter</dt>
-				<dd>Type to search log text, source, or level name. Matching entries are shown; others are hidden.</dd>
+				<dd>Type to search log text, source, or level name. Matching entries are shown; others are hidden. Works together with sorting.</dd>
+				<dt>Export CSV</dt>
+				<dd>Downloads all syslog entries with timestamp, source, level, and message text.</dd>
 			</dl>
 		</section>
 		<section class="help-section">
@@ -356,7 +362,9 @@
 				<dt>Protocol List</dt>
 				<dd>All supported decoders with number, name, modulation type (OOK = green, FSK = blue), and enabled/disabled status. Disabled protocols appear dimmed.</dd>
 				<dt>Search</dt>
-				<dd>Filter by protocol name or number. Modulation counts (OOK/FSK) are shown in the toolbar.</dd>
+				<dd>Filter by protocol name or number. Modulation counts (OOK/FSK) are shown in the toolbar. Works together with sorting.</dd>
+				<dt>Sort</dt>
+				<dd>Click column headers (#, Name, Mod, Enabled) to sort. First click sorts ascending, second click descending, third click returns to default order.</dd>
 				<dt>Protocol Detail</dt>
 				<dd>Click a protocol row to expand its output fields, signal parameters (short/long/reset/gap/sync), and other properties.</dd>
 			</dl>
@@ -390,6 +398,8 @@
 			<dl class="help-dl">
 				<dt>Server Statistics</dt>
 				<dd>Decoder statistics fetched from the server, displayed as structured tables. Auto-refreshes every 10 seconds (toggle with checkbox). Click Refresh for manual update.</dd>
+				<dt>Sort</dt>
+				<dd>Click column headers in any statistics table to sort. First click sorts ascending, second click descending, third click returns to default order. Sort state persists across auto-refresh cycles.</dd>
 				<dt>Client Metrics</dt>
 				<dd>Browser-side performance data: memory usage, event counts, flush timing, peak batch sizes, and render durations.</dd>
 			</dl>
@@ -408,7 +418,7 @@
 		</section>
 		<section class="help-section">
 			<h2>Overlay Panels</h2>
-			<p>Syslog, Protocols, Stats, System, Help, Settings, and Debug are floating overlay panels that stay visible while switching between Monitor and Devices.</p>
+			<p>Help, Settings, and Debug are floating overlay panels that stay visible while switching between Monitor and Devices.</p>
 			<dl class="help-dl">
 				<dt>Drag</dt>
 				<dd>Drag the titlebar to move a floating panel anywhere on screen.</dd>
@@ -442,10 +452,12 @@
 		</section>
 		<section class="help-section">
 			<h2>Debug</h2>
-			<p>The Debug tab is hidden by default. Enable it by starting the server with <code>-M web_ui_debug</code>. Toggle with <kbd>9</kbd> or the Debug tab button.</p>
+			<p>The Debug tab is hidden by default. Enable it by starting the server with <code>-M web_ui_debug</code>, or via Settings &gt; Advanced &gt; Enable Debug panel. Toggle with <kbd>9</kbd> or the Debug tab button.</p>
 			<dl class="help-dl">
 				<dt>Test Injection</dt>
 				<dd>Inject single events by model type to test the UI without live hardware.</dd>
+				<dt>Populate All Models</dt>
+				<dd>Fills the UI with 27 diverse device models spanning weather, indoor, TPMS, cooking, pool, soil, energy, security, smoke, water leak, shutter, tank level, doorbell, and keyfob categories. Creates 3 unique device IDs per model with randomized data values. The &ldquo;evt/device&rdquo; control sets how many events per device (1&ndash;20, default 3). Useful for demos, visual testing, and verifying that all field types display correctly.</dd>
 				<dt>Benchmark</dt>
 				<dd>Bulk-inject 1000, 10000, or 50000 events to stress-test rendering performance. Results show events/sec throughput.</dd>
 				<dt>Rate Simulator</dt>
@@ -453,7 +465,7 @@
 				<dt>Chart Stress</dt>
 				<dd>Fills the activity chart with thousands of dots to test chart rendering performance.</dd>
 				<dt>Performance</dt>
-				<dd>Shows client-side metrics: flush timing, batch sizes, render durations, and memory usage. Auto-refresh updates every 2 seconds.</dd>
+				<dd>Shows client-side metrics: flush timing, batch sizes, render durations, and memory usage. Auto-refresh updates every 1 second.</dd>
 			</dl>
 		</section>
 		<section class="help-section">
@@ -461,9 +473,11 @@
 			<p>Browser console functions for testing without live hardware:</p>
 			<dl class="help-dl">
 				<dt><code>_injectTestEvent('Model')</code></dt>
-				<dd>Inject a single event with random variation. Models: Kia-TPMS, Acurite-Tower, LaCrosse-TX141W, Oregon-THN132N, Nexus-TH.</dd>
+				<dd>Inject a single event with random variation. 27 built-in templates: weather (Acurite-Tower, Acurite-5n1, Fine-Offset-WH65B, WS2032, LaCrosse-TX141W, Oregon-THN132N, Nexus-TH), indoor (Ambient-Weather-WH31E, Prologue-TH, GT-WT02, Bresser-3CH), TPMS (Kia-TPMS, Schrader-TPMS, Toyota-TPMS), cooking (Maverick-ET73x), pool (Thermopro-TX2), soil (Springfield-Soil), energy (Efergy-e2, CurrentCost-TX), security (DSC-Security, Interlogix), smoke (Smoke-GS558), water (Govee-Water), shutter (Somfy-RTS), tank (Oil-Watchman), doorbell (Byron-BY), keyfob (Microchip-HCS200). Any unknown model name creates a generic device.</dd>
 				<dt><code>_injectBulkEvents(count, models)</code></dt>
 				<dd>Inject many events for performance testing. E.g. <code>_injectBulkEvents(1000)</code> for 1000 events across 5 models.</dd>
+				<dt><code>dbgPopulateAllModels(eventsPerDevice)</code></dt>
+				<dd>Populate the UI with all 27 model templates, 3 device IDs each, with varied data. E.g. <code>dbgPopulateAllModels(3)</code> injects 243 events across 81 devices.</dd>
 			</dl>
 		</section>
 	</div>
@@ -475,15 +489,16 @@
 	<div id="syslog-bar" class="bar">
 		<span id="syslog-count">0 entries</span>
 		<input id="syslog-search" class="filter-input" type="text" placeholder="Filter log...">
+		<button id="syslog-export" class="btn-sm">Export CSV</button>
 		<button id="syslog-clear" class="btn-sm">Clear</button>
 	</div>
 	<div id="syslog-wrap">
 		<table id="syslog-table">
 			<thead><tr>
-				<th class="col-syslog-time">Time</th>
-				<th class="col-syslog-src">Source</th>
-				<th class="col-syslog-lvl">Level</th>
-				<th class="col-syslog-msg">Message</th>
+				<th class="col-syslog-time sortable" data-sort="time">Time <span class="sort-ind"></span></th>
+				<th class="col-syslog-src sortable" data-sort="src">Source <span class="sort-ind"></span></th>
+				<th class="col-syslog-lvl sortable" data-sort="lvl">Level <span class="sort-ind"></span></th>
+				<th class="col-syslog-msg sortable" data-sort="msg">Message <span class="sort-ind"></span></th>
 			</tr></thead>
 			<tbody id="syslog-body"></tbody>
 		</table>
@@ -556,6 +571,15 @@
 						<input id="dbg-bulk-count" type="number" value="1000" min="1" style="width:80px">
 						<input id="dbg-bulk-models" type="number" value="5" min="1" max="20" style="width:60px" title="Number of models">
 						<button class="dbg-btn" id="dbg-inject-bulk">Inject Bulk</button>
+					</div>
+				</div>
+				<div class="field" style="margin-top:8px">
+					<label>Populate All Models</label>
+					<div class="field-row">
+						<input id="dbg-pop-count" type="number" value="3" min="1" max="20"
+							style="width:60px" title="Events per device">
+						<span style="font-size:11px;color:var(--fg2)">evt/device</span>
+						<button class="dbg-btn" id="dbg-populate">Populate All</button>
 					</div>
 				</div>
 			</fieldset>

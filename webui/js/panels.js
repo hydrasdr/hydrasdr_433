@@ -8,6 +8,22 @@ function renderProtocols(list) {
 	var fskCount = 0;
 	var totalCount = list.length;
 
+	/* Sort copy if user sort is active */
+	if (protoSortCol) {
+		list = list.slice(0);
+		var col = protoSortCol;
+		var asc = protoSortAsc;
+		list.sort(function (a, b) {
+			var va, vb;
+			if (col === 'num') { va = a.num || 0; vb = b.num || 0; }
+			else if (col === 'name') { va = a.name || ''; vb = b.name || ''; }
+			else if (col === 'mod') { va = a.mod || 0; vb = b.mod || 0; }
+			else if (col === 'en') { va = a.en ? 1 : 0; vb = b.en ? 1 : 0; }
+			else { return 0; }
+			return compareValues(va, vb, asc);
+		});
+	}
+
 	for (var i = 0; i < list.length; i++) {
 		var p = list[i];
 		var name = p.name || '';
@@ -65,6 +81,7 @@ function renderProtocols(list) {
 
 	/* Modulation count breakdown */
 	updateProtoModCounts(ookCount, fskCount, totalCount);
+	updateProtoSortIndicators();
 }
 
 function updateProtoModCounts(ook, fsk, total) {
@@ -75,6 +92,22 @@ function updateProtoModCounts(ook, fsk, total) {
 	elProtoModCounts.appendChild(document.createTextNode(' / '));
 	elProtoModCounts.appendChild(document.createTextNode(total + ' total'));
 }
+
+/* ---- Protocol: Column sort indicators ---- */
+function updateProtoSortIndicators() {
+	updateSortIndicators(document.querySelector('#proto-table thead'), protoSortCol, protoSortAsc);
+}
+
+/* ---- Protocol: Column sort click handler ---- */
+document.querySelector('#proto-table thead tr').addEventListener('click', function (e) {
+	var th = e.target;
+	while (th && th.tagName !== 'TH') th = th.parentNode;
+	if (!th || !hasClass(th, 'sortable')) return;
+	var s = cycleSortState(protoSortCol, protoSortAsc, th.getAttribute('data-sort'));
+	protoSortCol = s.col;
+	protoSortAsc = s.asc;
+	renderProtocols(protoList);
+});
 
 /* ---- Protocol: Row click to expand detail ---- */
 elProtoBody.addEventListener('click', function (e) {
@@ -188,181 +221,6 @@ function toggleProtoDetail(tr) {
 elProtoSearch.addEventListener('input', function () {
 	renderProtocols(protoList);
 });
-
-/* SETTINGS: gain mode state */
-var gainMode = 'auto'; /* 'auto' | 'linearity' | 'sensitivity' */
-
-function selectGainMode(mode) {
-	gainMode = mode;
-	var btns = document.querySelectorAll('.btn-gain');
-	for (var i = 0; i < btns.length; i++)
-		toggleClass(btns[i], 'active', btns[i].getAttribute('data-gain-mode') === mode);
-	$('s-gain').disabled = (mode === 'auto');
-	if (mode === 'auto') $('s-gain').value = '';
-}
-
-/* Mode button click */
-bindAll('.btn-gain', 'click', function (e) {
-	selectGainMode(e.currentTarget.getAttribute('data-gain-mode'));
-});
-
-/* SETTINGS: apply buttons, presets, enter-key */
-
-var applyHandlers = {
-	freq: function () {
-		var raw = $('s-freq').value.trim();
-		var hz;
-		/* Try unit-aware parse first (handles 868.5M, 433k, etc.) */
-		var parsed = parseValueWithUnit(raw);
-		if (!isNaN(parsed) && parsed > 0) {
-			hz = Math.round(parsed);
-			/* If bare number < 10000, assume MHz (e.g. "433.92" → 433920000) */
-			if (hz < 10000) hz = Math.round(parseFloat(raw) * 1e6);
-		} else {
-			return;
-		}
-		/* Guard: don't let refreshMeta overwrite this field */
-		guardSetting('freq');
-		/* Immediate local update for instant feedback */
-		if (metaCache) {
-			metaCache.center_frequency = hz;
-			if (metaCache.frequencies) metaCache.frequencies[0] = hz;
-		}
-		updateHeaderFromMeta(metaCache);
-		rpc('center_frequency', {val: hz}, function () { refreshMeta(); refreshStats(); });
-	},
-	gain: function () {
-		var arg;
-		if (gainMode === 'auto') {
-			arg = '0';
-		} else {
-			var v = $('s-gain').value.trim();
-			if (v === '') return;
-			arg = gainMode + '=' + v;
-		}
-		rpc('gain', {arg: arg}, function () { refreshMeta(); });
-	},
-	srate: function () {
-		var raw = $('s-srate').value.trim();
-		var hz = parseValueWithUnit(raw);
-		/* If bare number without suffix and small, assume it's meant as-is (Hz) */
-		if (isNaN(hz) || hz <= 0) return;
-		hz = Math.round(hz);
-		/* Guard: don't let refreshMeta overwrite this field */
-		guardSetting('srate');
-		if (metaCache) metaCache.samp_rate = hz;
-		updateHeaderFromMeta(metaCache);
-		rpc('sample_rate', {val: hz}, function () { refreshMeta(); refreshStats(); });
-	},
-	ppm: function () {
-		var v = parseInt($('s-ppm').value, 10);
-		rpc('ppm_error', {val: v});
-	},
-	hop: function () {
-		var v = parseInt($('s-hop').value, 10);
-		if (v >= 0) rpc('hop_interval', {val: v});
-	},
-	convert: function () {
-		var v = parseInt($('s-convert').value, 10);
-		rpc('convert', {val: v});
-	},
-	verbosity: function () {
-		var v = parseInt($('s-verbosity').value, 10);
-		rpc('verbosity', {val: v});
-	},
-	wideband: function () {
-		var v = $('s-wideband').value.trim();
-		if (v !== '') rpc('wideband', {arg: v}, function () { refreshMeta(); });
-	}
-};
-
-bindAll('.btn-apply', 'click', function (e) {
-	var key = e.currentTarget.getAttribute('data-apply');
-	if (applyHandlers[key]) applyHandlers[key]();
-});
-
-/* ---- Frequency, Sample Rate & Wideband Presets ---- */
-bindAll('.btn-preset', 'click', function (e) {
-	var btn = e.currentTarget;
-	var freq = btn.getAttribute('data-freq');
-	if (freq) {
-		$('s-freq').value = freq;
-		applyHandlers.freq();
-		return;
-	}
-	var sr = btn.getAttribute('data-srate');
-	if (sr) {
-		$('s-srate').value = fmtSrate(parseInt(sr, 10));
-		applyHandlers.srate();
-		return;
-	}
-	var wb = btn.getAttribute('data-wideband');
-	if (wb) {
-		$('s-wideband').value = (wb === 'off') ? '' : wb;
-		rpc('wideband', {arg: wb}, function () { refreshMeta(); });
-	}
-});
-
-/* ---- Enter Key for Apply ---- */
-bindAll('.field-row input, .field-row select', 'keydown', function (e) {
-	if (e.keyCode === 13) {
-		e.preventDefault();
-		var row = e.currentTarget.parentNode;
-		if (!row) return;
-		var btn = row.querySelector('.btn-apply');
-		if (!btn) return;
-		var key = btn.getAttribute('data-apply');
-		if (key && applyHandlers[key]) applyHandlers[key]();
-	}
-});
-
-/* Report meta checkboxes — display-only (server always sends full data) */
-var metaToggles = [
-	['s-meta-level', 'level'],
-	['s-meta-bits', 'bits'],
-	['s-meta-proto', 'protocol'],
-	['s-meta-desc', 'description'],
-	['s-meta-hires', 'hires']
-];
-for (var mi = 0; mi < metaToggles.length; mi++) {
-	(function (id, arg) {
-		$(id).addEventListener('change', function () {
-			if (arg === 'level')       showMetaLevel = this.checked;
-			else if (arg === 'bits')   showMetaBits = this.checked;
-			else if (arg === 'protocol') showMetaProto = this.checked;
-			else if (arg === 'description') showMetaDesc = this.checked;
-			else if (arg === 'hires') showMetaHires = this.checked;
-			/* Mark all groups dirty for full re-render */
-			var gm;
-			for (gm in monGroups) {
-				if (monGroups.hasOwnProperty(gm)) monGroups[gm].needsRebuild = true;
-			}
-			for (gm in devGroups) {
-				if (devGroups.hasOwnProperty(gm)) devGroups[gm].needsRebuild = true;
-			}
-			reRenderMonitorRows();
-			reRenderDeviceRows();
-			reRenderSyslogRows();
-		});
-	})(metaToggles[mi][0], metaToggles[mi][1]);
-}
-
-/* Bias-T checkbox */
-$('s-biastee').addEventListener('change', function () {
-	rpc('biastee', {val: this.checked ? 1 : 0});
-});
-
-/* Debug enable checkbox in Settings → Advanced */
-if (elDbgCheckbox) {
-	elDbgCheckbox.addEventListener('change', function () {
-		debugEnabled = elDbgCheckbox.checked;
-		if (elDbgTabBtn) elDbgTabBtn.style.display = debugEnabled ? '' : 'none';
-		/* If disabling and debug panel is open, close it */
-		if (!debugEnabled && overlayPanels.debug && overlayPanels.debug.open) {
-			toggleOverlay('debug');
-		}
-	});
-}
 
 /* STATS */
 
@@ -481,21 +339,6 @@ function renderStatsLevel(frag, obj, sectionLabel) {
 
 /* Render array of objects as a columnar table with header row */
 function renderStatsArrayTable(frag, label, arr) {
-	/* Sort by first numeric field (e.g. device/channel number) */
-	var sortKey = null;
-	if (arr.length > 0) {
-		for (var sk in arr[0]) {
-			if (arr[0].hasOwnProperty(sk) && typeof arr[0][sk] === 'number') {
-				sortKey = sk;
-				break;
-			}
-		}
-	}
-	if (sortKey) {
-		arr = arr.slice(0); /* copy to avoid mutating original */
-		arr.sort(function (a, b) { return (a[sortKey] || 0) - (b[sortKey] || 0); });
-	}
-
 	/* Collect all keys across all objects (preserve order) */
 	var cols = [];
 	var colSet = {};
@@ -511,22 +354,74 @@ function renderStatsArrayTable(frag, label, arr) {
 	}
 	if (cols.length === 0) return;
 
+	/* Sort: user sort takes priority, else default to first numeric field asc */
+	arr = arr.slice(0); /* copy to avoid mutating original */
+	var ss = statsSortState[label];
+	if (ss && ss.col) {
+		var userCol = ss.col;
+		var userAsc = ss.asc;
+		arr.sort(function (a, b) {
+			return compareValues(a[userCol], b[userCol], userAsc);
+		});
+	} else {
+		/* Default: sort by first numeric field ascending */
+		var sortKey = null;
+		if (arr.length > 0) {
+			for (var sk in arr[0]) {
+				if (arr[0].hasOwnProperty(sk) && typeof arr[0][sk] === 'number') {
+					sortKey = sk;
+					break;
+				}
+			}
+		}
+		if (sortKey) {
+			arr.sort(function (a, b) { return (a[sortKey] || 0) - (b[sortKey] || 0); });
+		}
+	}
+
 	var tbl = document.createElement('table');
 	tbl.className = 'stats-table stats-col-table';
 	var cap = document.createElement('caption');
 	cap.textContent = fmtStatLabel(label);
 	tbl.appendChild(cap);
 
-	/* Header row */
+	/* Header row with sortable columns */
 	var thead = document.createElement('thead');
 	var htr = document.createElement('tr');
 	for (i = 0; i < cols.length; i++) {
 		var th = document.createElement('th');
-		th.textContent = fmtStatLabel(cols[i]);
+		th.className = 'sortable';
+		th.setAttribute('data-sort', cols[i]);
+		th.textContent = fmtStatLabel(cols[i]) + ' ';
+		var ind = document.createElement('span');
+		ind.className = 'sort-ind';
+		if (ss && ss.col === cols[i]) {
+			addClass(th, 'sort-active');
+			ind.textContent = ss.asc ? SORT_ASC : SORT_DESC;
+		}
+		th.appendChild(ind);
 		htr.appendChild(th);
 	}
 	thead.appendChild(htr);
 	tbl.appendChild(thead);
+
+	/* Click handler for sorting (closed over label) */
+	(function (lbl) {
+		htr.addEventListener('click', function (e) {
+			var target = e.target;
+			while (target && target.tagName !== 'TH') target = target.parentNode;
+			if (!target || !hasClass(target, 'sortable')) return;
+			var col = target.getAttribute('data-sort');
+			var cur = statsSortState[lbl];
+			if (cur && cur.col === col) {
+				if (cur.asc) { statsSortState[lbl] = {col: col, asc: false}; }
+				else { delete statsSortState[lbl]; }
+			} else {
+				statsSortState[lbl] = {col: col, asc: true};
+			}
+			refreshStats();
+		});
+	})(label);
 
 	/* Data rows */
 	var tbody = document.createElement('tbody');
@@ -596,8 +491,8 @@ function appendSyslogEntry(msg) {
 	renderSyslogRow(entry);
 }
 
-/* Append a single row at the top of the syslog table */
-function renderSyslogRow(entry) {
+/* Build a single syslog TR from an entry (pure function, returns TR) */
+function buildSyslogTr(entry) {
 	var tr = document.createElement('tr');
 	var lvl = entry.lvl;
 	var cls = LOG_CLASSES[lvl] || 'log-info';
@@ -631,6 +526,18 @@ function renderSyslogRow(entry) {
 	if (syslogFilterStr && !matchesSyslogFilter(entry)) {
 		tr.className = (tr.className ? tr.className + ' ' : '') + 'row-hidden';
 	}
+	return tr;
+}
+
+/* Append a single row at the top of the syslog table */
+function renderSyslogRow(entry) {
+	/* If sort is active, rebuild entire table to maintain order */
+	if (syslogSortCol) {
+		rebuildSyslogTable();
+		return;
+	}
+
+	var tr = buildSyslogTr(entry);
 
 	/* Insert at top */
 	prependChild(elSyslogBody, tr);
@@ -642,6 +549,48 @@ function renderSyslogRow(entry) {
 
 	elSyslogCount.textContent = pluralize(syslogEntries.length, 'entry', 'entries');
 }
+
+/* Rebuild entire syslog table (used when sort is active) */
+function rebuildSyslogTable() {
+	var sorted = syslogEntries.slice(0);
+	if (syslogSortCol) {
+		var col = syslogSortCol;
+		var asc = syslogSortAsc;
+		sorted.sort(function (a, b) {
+			var va, vb;
+			if (col === 'time') { va = a.time; vb = b.time; }
+			else if (col === 'src') { va = a.src; vb = b.src; }
+			else if (col === 'lvl') { va = a.lvl; vb = b.lvl; }
+			else if (col === 'msg') { va = a.msg; vb = b.msg; }
+			else { return 0; }
+			return compareValues(va, vb, asc);
+		});
+	}
+	var frag = document.createDocumentFragment();
+	for (var i = 0; i < sorted.length; i++) {
+		frag.appendChild(buildSyslogTr(sorted[i]));
+	}
+	elSyslogBody.innerHTML = '';
+	elSyslogBody.appendChild(frag);
+	elSyslogCount.textContent = pluralize(syslogEntries.length, 'entry', 'entries');
+	updateSyslogSortIndicators();
+}
+
+/* Syslog sort indicators */
+function updateSyslogSortIndicators() {
+	updateSortIndicators(document.querySelector('#syslog-table thead'), syslogSortCol, syslogSortAsc);
+}
+
+/* Syslog sort click handler */
+document.querySelector('#syslog-table thead tr').addEventListener('click', function (e) {
+	var th = e.target;
+	while (th && th.tagName !== 'TH') th = th.parentNode;
+	if (!th || !hasClass(th, 'sortable')) return;
+	var s = cycleSortState(syslogSortCol, syslogSortAsc, th.getAttribute('data-sort'));
+	syslogSortCol = s.col;
+	syslogSortAsc = s.asc;
+	rebuildSyslogTable();
+});
 
 function matchesSyslogFilter(entry) {
 	if (!syslogFilterStr) return true;
@@ -664,6 +613,7 @@ function applySyslogFilter() {
 
 /* Re-render syslog time cells (called when hi-res toggle changes) */
 function reRenderSyslogRows() {
+	if (syslogSortCol) { rebuildSyslogTable(); return; }
 	var rows = elSyslogBody.childNodes;
 	for (var i = 0; i < rows.length; i++) {
 		var tr = rows[i];
@@ -675,12 +625,28 @@ function reRenderSyslogRows() {
 /* Syslog search filter */
 elSyslogSearch.addEventListener('input', function () {
 	syslogFilterStr = elSyslogSearch.value.toLowerCase().trim();
+	if (syslogSortCol) { rebuildSyslogTable(); return; }
 	applySyslogFilter();
+});
+
+/* Syslog CSV export */
+$('syslog-export').addEventListener('click', function () {
+	if (syslogEntries.length === 0) return;
+	var lines = ['Time,Source,Level,Message'];
+	for (var i = 0; i < syslogEntries.length; i++) {
+		var e = syslogEntries[i];
+		var lvl = LOG_LEVELS[e.lvl] || 'INFO';
+		lines.push(csvEscape(e.time) + ',' + csvEscape(e.src) + ',' + csvEscape(lvl) + ',' + csvEscape(e.msg));
+	}
+	downloadCSV('hydrasdr_433_syslog.csv', lines.join('\n'));
 });
 
 /* Syslog clear */
 $('syslog-clear').addEventListener('click', function () {
 	syslogEntries = [];
+	syslogSortCol = null;
+	syslogSortAsc = true;
 	elSyslogBody.innerHTML = '';
 	elSyslogCount.textContent = '0 entries';
+	updateSyslogSortIndicators();
 });

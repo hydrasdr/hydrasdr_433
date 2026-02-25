@@ -86,17 +86,9 @@ function createMonGroup(model) {
 			{ cls: 'col-id sortable', sort: 'id', label: 'ID' }
 		],
 		onSort: function (col) {
-			if (monSortCol === col) {
-				if (!monSortAsc) {
-					monSortCol = null;
-					monSortAsc = true;
-				} else {
-					monSortAsc = false;
-				}
-			} else {
-				monSortCol = col;
-				monSortAsc = true;
-			}
+			var s = cycleSortState(monSortCol, monSortAsc, col);
+			monSortCol = s.col;
+			monSortAsc = s.asc;
 			updateMonSortIndicators();
 			if (monSortCol) sortAllMonGroups();
 		},
@@ -136,17 +128,9 @@ function createDevGroup(model) {
 			{ cls: 'col-dev-count sortable', sort: 'count', label: 'Events' }
 		],
 		onSort: function (col) {
-			if (devSortCol === col) {
-				if (!devSortAsc) {
-					devSortCol = 'seen';
-					devSortAsc = false;
-				} else {
-					devSortAsc = false;
-				}
-			} else {
-				devSortCol = col;
-				devSortAsc = true;
-			}
+			var s = cycleSortState(devSortCol, devSortAsc, col, 'seen', false);
+			devSortCol = s.col;
+			devSortAsc = s.asc;
 			renderDeviceList();
 		},
 		onRowClick: function (tr) {
@@ -169,30 +153,13 @@ function getOrCreateDevGroup(model) {
 
 /* ---- Column management ---- */
 
-/* Update a group's data columns from a batch of messages.
+/* Update a group's data columns from a list of items.
+   getMsgFn extracts the message from each item.
    Returns true if new columns were added. */
-function updateGroupDataKeys(group, batch) {
+function updateGroupDataKeys(group, items, getMsgFn) {
 	var changed = false;
-	for (var i = 0; i < batch.length; i++) {
-		var keys = getVisibleKeys(batch[i]);
-		for (var j = 0; j < keys.length; j++) {
-			var k = keys[j];
-			if (!group.dataKeysSet[k]) {
-				group.dataKeysSet[k] = 1;
-				group.dataKeys.push(k);
-				changed = true;
-			}
-		}
-	}
-	return changed;
-}
-
-/* Update a device group's data columns from a list of device lastEvents.
-   Returns true if new columns were added. */
-function updateDevGroupDataKeys(group, devs) {
-	var changed = false;
-	for (var i = 0; i < devs.length; i++) {
-		var keys = getVisibleKeys(devs[i].lastEvent);
+	for (var i = 0; i < items.length; i++) {
+		var keys = getVisibleKeys(getMsgFn(items[i]));
 		for (var j = 0; j < keys.length; j++) {
 			var k = keys[j];
 			if (!group.dataKeysSet[k]) {

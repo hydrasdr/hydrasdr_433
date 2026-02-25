@@ -29,7 +29,7 @@ JS_MODULES = [
 	'js/chart.js',
 	'js/monitor.js',
 	'js/devices.js',
-	'js/tabs.js',
+	'js/panels.js',
 	'js/debug.js',
 	'js/init.js',
 ]

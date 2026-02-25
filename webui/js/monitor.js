@@ -1,12 +1,22 @@
 /* MONITOR: event table — THE HOT PATH All optimizations concentrate here. */
 
 /* Batch flush: called once per animation frame.
-   Processes ALL queued events partitioned by model. */
+   Processes ALL queued events partitioned by model.
+   When the browser tab is hidden, defers DOM work to save CPU. */
 function flushEvents() {
 	rafId = 0;
 	var batch = pendingEvents;
 	pendingEvents = [];
 	if (batch.length === 0) return;
+
+	/* Defer DOM rendering while tab is hidden — accumulate for later */
+	if (document.hidden) {
+		for (var hi = 0; hi < batch.length; hi++) hiddenBatch.push(batch[hi]);
+		eventCount += batch.length;
+		rowCount += batch.length;
+		return;
+	}
+
 	var t0 = performance.now();
 
 	/* Partition batch by model */
@@ -28,7 +38,7 @@ function flushEvents() {
 		var group = getOrCreateMonGroup(m);
 
 		/* Update data columns for this group */
-		if (updateGroupDataKeys(group, msgs)) {
+		if (updateGroupDataKeys(group, msgs, _identity)) {
 			rebuildGroupColumns(group);
 			/* Backfill existing rows with new column cells */
 			var totalCols = group.fixedCols + group.dataKeys.length;
@@ -151,19 +161,7 @@ function applyFilterToExistingRows() {
 function updateMonSortIndicators() {
 	for (var model in monGroups) {
 		if (!monGroups.hasOwnProperty(model)) continue;
-		var ths = monGroups[model].theadTr.querySelectorAll('th.sortable');
-		for (var i = 0; i < ths.length; i++) {
-			var th = ths[i];
-			var col = th.getAttribute('data-sort');
-			var ind = th.querySelector('.sort-ind');
-			if (col === monSortCol) {
-				th.classList.add('sort-active');
-				if (ind) ind.textContent = monSortAsc ? SORT_ASC : SORT_DESC;
-			} else {
-				th.classList.remove('sort-active');
-				if (ind) ind.textContent = '';
-			}
-		}
+		updateSortIndicators(monGroups[model].theadTr, monSortCol, monSortAsc);
 	}
 }
 
@@ -200,17 +198,7 @@ function sortMonGroupTable(group) {
 	}
 
 	rows.sort(function (a, b) {
-		var va = getSortValue(a, col);
-		var vb = getSortValue(b, col);
-		var cmp;
-		if (typeof va === 'number' && typeof vb === 'number') {
-			cmp = va - vb;
-		} else {
-			va = '' + va;
-			vb = '' + vb;
-			cmp = va < vb ? -1 : va > vb ? 1 : 0;
-		}
-		return asc ? cmp : -cmp;
+		return compareValues(getSortValue(a, col), getSortValue(b, col), asc);
 	});
 
 	var frag = document.createDocumentFragment();
@@ -419,7 +407,7 @@ function exportMonitorCSV() {
 		}
 		lines.push(cols.join(','));
 	}
-	downloadCSV('hydrasdr_monitor.csv', lines.join('\n'));
+	downloadCSV('hydrasdr_433_monitor.csv', lines.join('\n'));
 }
 $('mon-export').addEventListener('click', exportMonitorCSV);
 
@@ -433,7 +421,9 @@ $('mon-clear').addEventListener('click', function () {
 	monGroupOrder = [];
 	eventCount = 0;
 	rowCount = 0;
-	rateWindow = [];
+	for (var ri = 0; ri < RATE_BUCKET_COUNT; ri++) rateBuckets[ri] = 0;
+	rateBucketIdx = 0;
+	rateBucketTs = 0;
 	elMonCount.textContent = '0 events';
 	elMonRate.textContent = '0.0 evt/s';
 	/* Also clear device registry, device groups, and chart */
@@ -446,8 +436,8 @@ $('mon-clear').addEventListener('click', function () {
 	chartPanOffsetMs = 0;
 	chartDirty = true;
 	devActiveKeys = {};
+	devActiveCount = 0;
 	devPrevKeys = null;
-	devPrevCount = 0;
 	while (elDevGroups.firstChild) {
 		elDevGroups.removeChild(elDevGroups.firstChild);
 	}
