@@ -29,3 +29,4 @@ cmake-build-debug/
 # File manager files
 .DS_Store
 .history
+/src/webui_assets.h

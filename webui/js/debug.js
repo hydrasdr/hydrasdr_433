@@ -109,15 +109,8 @@ var testTemplates = {
 		description:'Microchip HCS200 keyfob'}
 };
 
-window._injectTestEvent = function (model) {
-	model = model || 'Acurite-Tower';
-	var base = testTemplates[model]
-		|| {model: model, id: Math.floor(Math.random()*9999),
-			temperature_C: 20 + Math.random()*10, rssi: -10 - Math.random()*20};
-	var msg = {};
-	for (var k in base) msg[k] = base[k];
-	msg.id = base.id + Math.floor(Math.random() * 10);
-	msg.time = nowTime();
+/* Randomize sensor values in a test message to simulate realistic variation */
+function mutateTestValues(msg) {
 	if (msg.temperature_C !== undefined) msg.temperature_C = +(msg.temperature_C + (Math.random()-0.5)*4).toFixed(1);
 	if (msg.temperature_1_C !== undefined) msg.temperature_1_C = +(msg.temperature_1_C + (Math.random()-0.5)*4).toFixed(1);
 	if (msg.temperature_2_C !== undefined) msg.temperature_2_C = +(msg.temperature_2_C + (Math.random()-0.5)*4).toFixed(1);
@@ -134,6 +127,18 @@ window._injectTestEvent = function (model) {
 	if (msg.uv !== undefined) msg.uv = Math.round(Math.max(0, msg.uv + (Math.random()-0.5)*2));
 	if (msg.light_lux !== undefined) msg.light_lux = Math.round(Math.max(0, msg.light_lux + (Math.random()-0.5)*1000));
 	if (msg.rssi !== undefined) msg.rssi = +(msg.rssi + (Math.random()-0.5)*6).toFixed(1);
+}
+
+window._injectTestEvent = function (model) {
+	model = model || 'Acurite-Tower';
+	var base = testTemplates[model]
+		|| {model: model, id: Math.floor(Math.random()*9999),
+			temperature_C: 20 + Math.random()*10, rssi: -10 - Math.random()*20};
+	var msg = {};
+	for (var k in base) msg[k] = base[k];
+	msg.id = base.id + Math.floor(Math.random() * 10);
+	msg.time = nowTime();
+	mutateTestValues(msg);
 	recordEventRate(1);
 	updateDeviceRegistry(msg);
 	pendingEvents.push(msg);
@@ -145,8 +150,8 @@ window._injectTestEvent = function (model) {
           _injectBulkEvents(10000, 20)    — 10K events, 20 models
           _injectBulkEvents(10000, 1, 'Somfy-IOHC') — 10K events, single model */
 window._injectBulkEvents = function (count, numModels, forcedModel) {
-	count = count || 1000;
-	numModels = numModels || 5;
+	count = count || DBG_BULK_DEFAULT;
+	numModels = numModels || DBG_MODELS_DEFAULT;
 	var models = Object.keys(testTemplates);
 	/* Extend with generated model names if needed */
 	while (models.length < numModels) {
@@ -175,7 +180,7 @@ window._injectBulkEvents = function (count, numModels, forcedModel) {
    and varied events.  Great for demos and visual testing.
    Usage: dbgPopulateAllModels(3)  — 3 events per device, ~75 devices */
 function dbgPopulateAllModels(eventsPerModel) {
-	eventsPerModel = eventsPerModel || 3;
+	eventsPerModel = eventsPerModel || DBG_POP_DEFAULT;
 	var models = Object.keys(testTemplates);
 	var devicesPerModel = [0, 1, 2]; /* offsets → 2-3 unique IDs per model */
 	var t0 = performance.now();
@@ -188,23 +193,7 @@ function dbgPopulateAllModels(eventsPerModel) {
 				for (var k in tpl) msg[k] = tpl[k];
 				msg.id = tpl.id + devicesPerModel[d];
 				msg.time = nowTime();
-				/* Mutate values — reuse the same logic as _injectTestEvent */
-				if (msg.temperature_C !== undefined) msg.temperature_C = +(msg.temperature_C + (Math.random()-0.5)*4).toFixed(1);
-				if (msg.temperature_1_C !== undefined) msg.temperature_1_C = +(msg.temperature_1_C + (Math.random()-0.5)*4).toFixed(1);
-				if (msg.temperature_2_C !== undefined) msg.temperature_2_C = +(msg.temperature_2_C + (Math.random()-0.5)*4).toFixed(1);
-				if (msg.humidity !== undefined) msg.humidity = Math.round(msg.humidity + (Math.random()-0.5)*10);
-				if (msg.pressure_kPa !== undefined) msg.pressure_kPa = +(msg.pressure_kPa + (Math.random()-0.5)*20).toFixed(1);
-				if (msg.wind_avg_km_h !== undefined) msg.wind_avg_km_h = +(Math.max(0, msg.wind_avg_km_h + (Math.random()-0.5)*6)).toFixed(1);
-				if (msg.wind_avg_m_s !== undefined) msg.wind_avg_m_s = +(Math.max(0, msg.wind_avg_m_s + (Math.random()-0.5)*2)).toFixed(1);
-				if (msg.wind_dir_deg !== undefined) msg.wind_dir_deg = Math.round((msg.wind_dir_deg + (Math.random()-0.5)*30 + 360) % 360);
-				if (msg.rain_mm !== undefined) msg.rain_mm = +(msg.rain_mm + Math.random()*0.4).toFixed(1);
-				if (msg.power_W !== undefined) msg.power_W = Math.round(Math.max(0, msg.power_W + (Math.random()-0.5)*100));
-				if (msg.energy_kWh !== undefined) msg.energy_kWh = +(msg.energy_kWh + Math.random()*0.3).toFixed(1);
-				if (msg.moisture !== undefined) msg.moisture = Math.round(Math.max(0, Math.min(100, msg.moisture + (Math.random()-0.5)*10)));
-				if (msg.depth_cm !== undefined) msg.depth_cm = Math.round(Math.max(0, msg.depth_cm + (Math.random()-0.5)*4));
-				if (msg.uv !== undefined) msg.uv = Math.round(Math.max(0, msg.uv + (Math.random()-0.5)*2));
-				if (msg.light_lux !== undefined) msg.light_lux = Math.round(Math.max(0, msg.light_lux + (Math.random()-0.5)*1000));
-				if (msg.rssi !== undefined) msg.rssi = +(msg.rssi + (Math.random()-0.5)*6).toFixed(1);
+				mutateTestValues(msg);
 				recordEventRate(1);
 				updateDeviceRegistry(msg);
 				pendingEvents.push(msg);
@@ -320,7 +309,7 @@ function dbgStartRateSim(rate, sec) {
 			if (el) el.textContent += '\nRate sim complete. '
 				+ injected + ' events in ' + elapsed.toFixed(1) + 's';
 		}
-	}, 20);
+	}, DBG_RATE_TICK_MS);
 }
 
 function dbgStopRateSim() {
@@ -389,7 +378,7 @@ function dbgChartStress() {
 	});
 
 	if (rateSim) rateSim.addEventListener('click', function () {
-		dbgStartRateSim(100, 10);
+		dbgStartRateSim(DBG_RATE_DEFAULT, DBG_RATE_DUR);
 	});
 
 	if (rateStop) rateStop.addEventListener('click', dbgStopRateSim);
@@ -411,8 +400,8 @@ function dbgChartStress() {
 
 	/* Bulk inject */
 	if (injectBulk) injectBulk.addEventListener('click', function () {
-		var count = parseInt($('dbg-bulk-count').value, 10) || 1000;
-		var models = parseInt($('dbg-bulk-models').value, 10) || 5;
+		var count = parseInt($('dbg-bulk-count').value, 10) || DBG_BULK_DEFAULT;
+		var models = parseInt($('dbg-bulk-models').value, 10) || DBG_MODELS_DEFAULT;
 		_injectBulkEvents(count, models);
 		refreshDebugDashboard();
 	});
@@ -420,7 +409,7 @@ function dbgChartStress() {
 	/* Populate all models */
 	var populateBtn = $('dbg-populate');
 	if (populateBtn) populateBtn.addEventListener('click', function () {
-		var n = parseInt($('dbg-pop-count').value, 10) || 3;
+		var n = parseInt($('dbg-pop-count').value, 10) || DBG_POP_DEFAULT;
 		var el = $('dbg-bench-output');
 		if (el) el.textContent = 'Populating all models...';
 		setTimeout(function () {

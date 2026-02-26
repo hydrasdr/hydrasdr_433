@@ -11,21 +11,93 @@
 
 /* ---- Constants ---- */
 var MAX_EVENTS = 500;
+var MAX_DEVICES = 500;             /* max tracked devices before stale eviction */
+var MAX_HIDDEN_BATCH = 5000;       /* max buffered events while tab hidden */
+var MAX_PAUSED_EVENTS = 5000;      /* max buffered events while paused */
 var RECONNECT_BASE_MS = 1000;
 var RECONNECT_MAX_MS = 30000;
 var STATS_INTERVAL_MS = 10000;
-var MOD_NAMES = ['', 'OOK', 'FSK', 'FSK'];
+/* Modulation type helpers — r_device.h: values < 16 = OOK, >= 16 = FSK.
+   Known coding subtypes are looked up; unknown future values get a
+   sensible fallback like "OOK-7" or "FSK-19" so nothing breaks. */
+var FSK_MOD_MIN = 16;
+var MOD_CODING = {
+	3: 'MC', 4: 'PCM', 5: 'PPM', 6: 'PWM', 8: 'PIWM',
+	9: 'DMC', 10: 'PWM', 11: 'PIWM', 12: 'NRZS',
+	16: 'PCM', 17: 'PWM', 18: 'MC'
+};
+function modName(idx) {
+	if (!idx || idx <= 0) return '?';
+	var base = idx >= FSK_MOD_MIN ? 'FSK' : 'OOK';
+	var coding = MOD_CODING[idx];
+	return coding ? base + '-' + coding : base + '-' + idx;
+}
 var RATE_WINDOW_MS = 5000;
+/* Toast */
+var TOAST_ANIM_MS = 300;           /* fade-out duration before DOM removal */
+/* Connection */
+var RATE_DISPLAY_MS = 500;         /* rate counter update interval */
+var RPC_COMPACT_THRESH = 16;       /* compact RPC queue when head exceeds this */
+var INIT_QUERY_DELAY_MS = 150;     /* delay before initial RPC queries on connect */
+/* Overlay / layout */
+var OVERLAY_Z_BASE = 100;
+var OVERLAY_Z_TOP = 101;
+var OVERLAY_INIT_Y = 80;           /* default floating panel Y offset */
+var DOCK_DEFAULT_SIZE = 400;       /* default dock panel width/height */
+var DOCK_MIN_SIZE = 200;
+var DOCK_MAX_RATIO = 0.6;          /* max fraction of parent for dock panel */
+var UNDOCK_DRAG_PX = 20;           /* drag distance to undock */
+var CHART_MIN_H = 60;              /* chart resize clamp min height */
+var CHART_MAX_H = 600;             /* chart resize clamp max height */
+var MOBILE_BP_PX = 700;            /* mobile breakpoint — auto-undock below this */
+/* Chart rendering */
+var CHART_MARGIN_LEFT = 30;
+var CHART_MARGIN_BOTTOM = 14;
+var CHART_MARGIN_TOP = 4;
+var CHART_MARGIN_RIGHT = 4;
+var CHART_DB_STEP = 6;             /* Y-axis dB grid step */
+var CHART_LABEL_SPACING_PX = 80;   /* min pixels between X-axis labels */
+var CHART_REDRAW_MS = 1000;        /* periodic chart redraw interval */
+var CHART_SCROLL_MAX = 1000;       /* scrollbar max value */
+var CHART_SCROLL_SNAP = 998;       /* scrollbar value to snap to live */
+var CHART_EST_EVENTS_PER_SEC = 7;  /* estimated event rate for history sizing */
+var CHART_MIN_ZOOM_SEL_PX = 5;    /* min pixel width for zoom selection */
+/* Signal bar */
+var SIG_DB_OFFSET = 30;            /* dB offset for negative signal mapping */
+var SIG_DB_RANGE = 29;             /* dB range divisor for percentage calc */
+var SIG_THRESH_HI = 60;            /* % threshold for high signal class */
+var SIG_THRESH_MID = 30;           /* % threshold for mid signal class */
+var SIG_BAR_MIN_PX = 4;            /* minimum signal bar width */
+/* Device flash */
+var DEV_FLASH_DELAY_MS = 50;       /* delay before starting CSS transition */
+/* Frequency input */
+var FREQ_MHZ_THRESH = 10000;       /* below this, assume MHz (e.g. "433.92") */
+/* Protocol UI */
+var PROTO_SEARCH_DEBOUNCE_MS = 150;
+var PROTO_BATCH_STAGGER_MS = 10;   /* ms between batch enable/disable RPCs */
+/* Debug defaults */
+var DBG_RATE_DEFAULT = 100;        /* default rate sim: events per second */
+var DBG_RATE_DUR = 10;             /* default rate sim: duration in seconds */
+var DBG_RATE_TICK_MS = 20;         /* rate sim timer interval */
+var DBG_BULK_DEFAULT = 1000;       /* default bulk inject count */
+var DBG_MODELS_DEFAULT = 5;        /* default bulk inject model count */
+var DBG_POP_DEFAULT = 3;           /* default populate events per model */
 
 /* ---- State ---- */
 var ws = null;
 var reconnectDelay = RECONNECT_BASE_MS;
 var reconnectCount = 0;
 var eventCount = 0;
-var rowCount = 0;
 var rpcQueue = [];
 var rpcQueueHead = 0;  /* index-based dequeue: avoids O(n) shift */
 var metaCache = null;
+var hdrGainStr = '';       /* "Auto", "Linearity 15", etc. */
+var hdrBiasTee = false;
+var hdrHopInterval = 0;    /* 0 = no hopping */
+var gainRanges = {         /* from device_info, populated on connect */
+	linearity:   {min: 0, max: 0, step: 1, def: 0},
+	sensitivity: {min: 0, max: 0, step: 1, def: 0}
+};
 var protoList = [];
 var statsTimer = null;
 var gotInitialMeta = false; /* flag: auto-sent meta received on connect */
@@ -50,16 +122,16 @@ var deviceRegistry = {};
 var deviceKeys = [];
 var deviceCount = 0;
 var devFilterStr = '';
-var devSortCol = 'seen';
-var devSortAsc = false;
+var devSortCol = null;     /* null = default order (seen desc); set by column click */
+var devSortAsc = true;
 var devDetailKey = null;
 var MAX_DEVICE_EVENTS = 200;
 var DEVICE_DETAIL_PAGE = 20;
 var devicesTabActive = false;
 var devRafId = 0;
 var devActiveKeys = {};    /* key → timestamp of last update, for green flash */
-var devActiveCount = 0;    /* approximate size of devActiveKeys for purge trigger */
 var DEV_FLASH_MS = 3000;   /* duration of green flash persistence */
+var DEV_ACTIVE_PURGE = 500; /* purge stale flash entries when map exceeds this */
 
 /* ---- Activity chart state (dot plot) ---- */
 var CHART_WINDOW_SEC = 300;        /* 5 minutes visible window */
@@ -118,20 +190,43 @@ var hiddenBatch = [];  /* events accumulated while document.hidden — flushed o
 
 /* ---- Client performance metrics ---- */
 var perfMetrics = {
+	/* Event pipeline */
 	eventsReceived: 0,     /* total events received since connect */
 	lastFlushMs: 0,        /* last flushEvents() duration */
 	lastFlushBatch: 0,     /* last flushEvents() batch size */
+	flushCount: 0,         /* total rAF flush cycles */
+	peakFlushMs: 0,        /* worst-case flush time */
+	peakBatchSize: 0,      /* largest batch processed */
+	peakEventRate: 0,      /* highest evt/s recorded */
+	/* Render timing */
 	lastReRenderMonMs: 0,  /* last reRenderMonitorRows() duration */
 	lastReRenderDevMs: 0,  /* last reRenderDeviceRows() duration */
 	lastChartMs: 0,        /* last renderActivityChart() duration */
-	flushCount: 0,         /* total rAF flush cycles */
-	peakFlushMs: 0,        /* worst-case flush time */
-	peakBatchSize: 0       /* largest batch processed */
+	lastProtocolsMs: 0,    /* last renderProtocols() duration */
+	lastSyslogMs: 0,       /* last rebuildSyslogTable() duration */
+	lastDevRegistryMs: 0,  /* last updateDeviceRegistry() cumulative per flush */
+	/* WebSocket / RPC */
+	lastMsgParseMs: 0,     /* last JSON.parse() time */
+	peakMsgParseMs: 0,     /* worst-case parse time */
+	rpcQueueDepth: 0,      /* current pending RPC callbacks */
+	peakRpcQueueDepth: 0,  /* peak RPC queue depth */
+	wsReconnects: 0,       /* total reconnection count */
+	/* Row pool */
+	rowPoolHits: 0,        /* allocations served from pool */
+	rowPoolMisses: 0,      /* allocations requiring createElement */
+	/* DOM */
+	domNodeCount: 0,       /* current DOM element count (updated on stats refresh) */
+	/* Hidden tab */
+	hiddenBatchMax: 0,     /* largest hiddenBatch size */
+	hiddenFlushes: 0,      /* number of hidden→visible flushes */
+	/* UI */
+	toastsShown: 0,        /* total toast notifications created */
+	fillDataCellsMs: 0     /* cumulative fillDataCells() time in last flush */
 };
 
 /* ---- Per-model groups (Monitor + Devices) ---- */
 /* Each group: { el, table, thead, theadTr, tbody, hdr, hdrModel, hdrCount,
-                 dataKeys, dataKeysSet, rowCount, model } */
+                 dataKeys, dataKeysSet, rowCount (monitor only), model } */
 var monGroups = {};      /* model → group object */
 var monGroupOrder = [];  /* ordered model names (most-recent-event first) */
 var devGroups = {};      /* model → group object */
@@ -169,7 +264,11 @@ var rowPool = [];
 var POOL_MAX = 128;
 
 function allocRow() {
-	if (rowPool.length > 0) return rowPool.pop();
+	if (rowPool.length > 0) {
+		perfMetrics.rowPoolHits++;
+		return rowPool.pop();
+	}
+	perfMetrics.rowPoolMisses++;
 	var tr = document.createElement('tr');
 	/* Pre-create 2 fixed TDs (time, id) — data columns added by ensureCells */
 	for (var i = 0; i < 2; i++) tr.appendChild(document.createElement('td'));
@@ -219,6 +318,64 @@ function bindAll(sel, evt, fn) {
 	for (var i = 0; i < a.length; i++) a[i].addEventListener(evt, fn);
 }
 
+/* ---- Display-change notification ---- */
+var displayChangeListeners = [];
+function onDisplayChange(fn) { displayChangeListeners.push(fn); }
+function notifyDisplayChange() {
+	for (var i = 0; i < displayChangeListeners.length; i++)
+		displayChangeListeners[i]();
+}
+
+/* ---- Toast notifications ---- */
+var TOAST_MAX = 5;
+var TOAST_DUR_OK = 4000;
+var TOAST_DUR_ERR = 6000;
+var TOAST_DUR_WARN = 5000;
+var TOAST_ICONS = {ok: '\u2713', err: '\u2717', warn: '\u26a0'};  /* ✓ ✗ ⚠ */
+var toastContainer = null;  /* cached on first use */
+
+function showToast(message, type) {
+	perfMetrics.toastsShown++;
+	if (!toastContainer) toastContainer = $('toast-container');
+	if (!toastContainer) return;
+
+	/* Enforce stack limit — remove oldest */
+	while (toastContainer.childNodes.length >= TOAST_MAX) {
+		toastContainer.removeChild(toastContainer.lastChild);
+	}
+
+	var t = type || 'ok';
+	var dur = t === 'err' ? TOAST_DUR_ERR : t === 'warn' ? TOAST_DUR_WARN : TOAST_DUR_OK;
+	var el = mkEl('div', 'toast toast-' + t + ' toast-enter');
+	var icon = mkEl('span', 'toast-icon', TOAST_ICONS[t] || '');
+	var msg = mkEl('span', '', message);
+	el.appendChild(icon);
+	el.appendChild(msg);
+
+	/* Click to dismiss */
+	el.addEventListener('click', function () { dismissToast(el); });
+
+	toastContainer.insertBefore(el, toastContainer.firstChild);
+
+	/* Trigger enter animation on next frame */
+	requestAnimationFrame(function () {
+		removeClass(el, 'toast-enter');
+	});
+
+	/* Auto-dismiss */
+	el._toastTimer = setTimeout(function () { dismissToast(el); }, dur);
+}
+
+function dismissToast(el) {
+	if (el._toastDismissed) return;
+	el._toastDismissed = true;
+	if (el._toastTimer) clearTimeout(el._toastTimer);
+	addClass(el, 'toast-exit');
+	setTimeout(function () {
+		if (el.parentNode) el.parentNode.removeChild(el);
+	}, TOAST_ANIM_MS);
+}
+
 /* ---- DOM refs (cached once, never re-queried) ---- */
 var elStatus   = $('hdr-status');
 var elInfo     = $('hdr-info');
@@ -245,6 +402,8 @@ var elDevChartWrap = $('dev-chart-wrap');
 var elDevSearch = $('dev-search');
 var elDevGroups = $('dev-groups');
 var elDevCount  = $('dev-count');
+var elDevEvtCount = $('dev-evt-count');
+var elDevRate   = $('dev-rate');
 var elDevListWrap    = $('dev-list-wrap');
 var elDevZoomReset = $('dev-zoom-reset');
 var elDevHistory = $('dev-history');

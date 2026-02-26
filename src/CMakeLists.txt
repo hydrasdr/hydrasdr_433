@@ -78,6 +78,7 @@ add_library(r_433 STATIC
     devices/ambientweather_tx8300.c
     devices/ambientweather_wh31e.c
     devices/ant_antplus.c
+    devices/apator_metra_eitn30.c
     devices/apator_metra_erm30.c
     devices/arad_ms_meter.c
     devices/archos_tbh.c
@@ -253,6 +254,7 @@ add_library(r_433 STATIC
     devices/rubicson_48659.c
     devices/rubicson_pool_48942.c
     devices/s3318p.c
+    devices/sainlogic_sa8.c
     devices/schou_72543_rain.c
     devices/schraeder.c
     devices/scmplus.c
@@ -279,13 +281,16 @@ add_library(r_433 STATIC
     devices/tfa_twin_plus_30.3049.c
     devices/thermopro_tp11.c
     devices/thermopro_tp12.c
+    devices/thermopro_tp211b.c
     devices/thermopro_tp28b.c
     devices/thermopro_tp82xb.c
+    devices/thermopro_tp862b.c
     devices/thermopro_tx2.c
     devices/thermopro_tx2c.c
     devices/thermopro_tx7b.c
     devices/thermor.c
     devices/tpms_abarth124.c
+    devices/tpms_airpuxem.c
     devices/tpms_ave.c
     devices/tpms_bmw.c
     devices/tpms_bmw_g3.c
@@ -314,6 +319,7 @@ add_library(r_433 STATIC
     devices/vauno_en8822c.c
     devices/vevor_7in1.c
     devices/visonic_powercode.c
+    devices/wallarge_cltx001.c
     devices/watts_thermostat.c
     devices/waveman.c
     devices/wec2103.c

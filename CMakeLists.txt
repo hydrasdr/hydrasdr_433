@@ -29,6 +29,11 @@ set(CMAKE_BUILD_TYPE ${CMAKE_BUILD_TYPE} CACHE STRING "")
 list(APPEND CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/cmake/Modules)
 
 ########################################################################
+# Default version (single source of truth — release.yml reads this)
+########################################################################
+set(HYDRASDR_FALLBACK_VERSION "25.12.3")
+
+########################################################################
 # Get version info from Git
 ########################################################################
 include(GetGitRevisionDescription)
@@ -42,7 +47,7 @@ if(GIT_COMMIT) # is a git repo
     # check if git describe failed (no tags found) - fallback to short commit hash
     if(GIT_VERSION MATCHES "NOTFOUND")
         string(SUBSTRING "${GIT_COMMIT}" 0 8 GIT_SHORT_COMMIT)
-        set(GIT_VERSION "25.12.2-g${GIT_SHORT_COMMIT}")
+        set(GIT_VERSION "${HYDRASDR_FALLBACK_VERSION}-g${GIT_SHORT_COMMIT}")
         message(STATUS "No git tags found, using commit hash for version")
     endif()
     message(STATUS "Found Git version: ${GIT_REFSPEC} commit ${GIT_COMMIT} from ${GIT_TIMESTAMP_ISO}")

@@ -1,5 +1,12 @@
 /* MONITOR: event table — THE HOT PATH All optimizations concentrate here. */
 
+onDisplayChange(function () {
+	for (var gm in monGroups) {
+		if (monGroups.hasOwnProperty(gm)) monGroups[gm].needsRebuild = true;
+	}
+	reRenderMonitorRows();
+});
+
 /* Batch flush: called once per animation frame.
    Processes ALL queued events partitioned by model.
    When the browser tab is hidden, defers DOM work to save CPU. */
@@ -12,12 +19,18 @@ function flushEvents() {
 	/* Defer DOM rendering while tab is hidden — accumulate for later */
 	if (document.hidden) {
 		for (var hi = 0; hi < batch.length; hi++) hiddenBatch.push(batch[hi]);
+		/* Cap hidden batch: discard oldest to prevent unbounded growth */
+		if (hiddenBatch.length > MAX_HIDDEN_BATCH) {
+			hiddenBatch = hiddenBatch.slice(-MAX_HIDDEN_BATCH);
+		}
+		if (hiddenBatch.length > perfMetrics.hiddenBatchMax)
+			perfMetrics.hiddenBatchMax = hiddenBatch.length;
 		eventCount += batch.length;
-		rowCount += batch.length;
 		return;
 	}
 
 	var t0 = performance.now();
+	perfMetrics.fillDataCellsMs = 0;  /* reset per-flush cumulative */
 
 	/* Partition batch by model */
 	var byModel = {};
@@ -84,7 +97,6 @@ function flushEvents() {
 	}
 
 	eventCount += batch.length;
-	rowCount += batch.length;
 
 	/* Reorder groups: move groups with new events to top */
 	for (var ri = modelsInBatch.length - 1; ri >= 0; ri--) {
@@ -95,8 +107,10 @@ function flushEvents() {
 	}
 	devGroupsDirty = true;
 
-	/* Update global counter */
-	elMonCount.textContent = eventCount + ' events';
+	/* Update global counter (both tabs) */
+	var evtStr = eventCount + ' events';
+	elMonCount.textContent = evtStr;
+	elDevEvtCount.textContent = evtStr;
 
 	/* Re-sort if sorting is active */
 	if (monSortCol) sortAllMonGroups();
@@ -220,29 +234,10 @@ function sortAllMonGroups() {
 }
 
 /* ---- Monitor: Row Click to Expand ---- */
-function toggleMonitorDetail(tr, colspan) {
-	colspan = colspan || 10; /* fallback */
-	/* If already expanded, collapse */
-	if (tr._detailRow) {
-		if (tr._detailRow.parentNode) {
-			tr._detailRow.parentNode.removeChild(tr._detailRow);
-		}
-		tr._detailRow = null;
-		removeClass(tr, 'row-expanded');
-		return;
-	}
-
-	/* Expand: create detail sub-row */
-	tr.className = (tr.className ? tr.className + ' ' : '') + 'row-expanded';
-	var detailTr = document.createElement('tr');
-	detailTr.className = 'detail-row';
-	var detailTd = document.createElement('td');
-	detailTd.setAttribute('colspan', '' + colspan);
-
+function buildMonitorDetailContent(msg) {
 	var content = document.createElement('div');
 	content.className = 'detail-content';
 
-	var msg = tr._eventData;
 	for (var k in msg) {
 		if (!msg.hasOwnProperty(k)) continue;
 		var v = msg[k];
@@ -271,18 +266,14 @@ function toggleMonitorDetail(tr, colspan) {
 
 		content.appendChild(pair);
 	}
+	return content;
+}
 
-	detailTd.appendChild(content);
-	detailTr.appendChild(detailTd);
-
-	/* Insert detail row right after the clicked row */
-	var nextSib = tr.nextSibling;
-	if (nextSib) {
-		tr.parentNode.insertBefore(detailTr, nextSib);
-	} else {
-		tr.parentNode.appendChild(detailTr);
-	}
-	tr._detailRow = detailTr;
+function toggleMonitorDetail(tr, colspan) {
+	colspan = colspan || 10; /* fallback */
+	toggleDetailRow(tr, '_detailRow', 'row-expanded', 'detail-row', colspan, function () {
+		return buildMonitorDetailContent(tr._eventData);
+	});
 }
 
 /* Re-render all Monitor rows with current data columns.
@@ -420,12 +411,13 @@ $('mon-clear').addEventListener('click', function () {
 	monGroups = {};
 	monGroupOrder = [];
 	eventCount = 0;
-	rowCount = 0;
 	for (var ri = 0; ri < RATE_BUCKET_COUNT; ri++) rateBuckets[ri] = 0;
 	rateBucketIdx = 0;
 	rateBucketTs = 0;
 	elMonCount.textContent = '0 events';
 	elMonRate.textContent = '0.0 evt/s';
+	elDevEvtCount.textContent = '0 events';
+	elDevRate.textContent = '0.0 evt/s';
 	/* Also clear device registry, device groups, and chart */
 	deviceRegistry = {};
 	deviceKeys = [];
@@ -436,7 +428,6 @@ $('mon-clear').addEventListener('click', function () {
 	chartPanOffsetMs = 0;
 	chartDirty = true;
 	devActiveKeys = {};
-	devActiveCount = 0;
 	devPrevKeys = null;
 	while (elDevGroups.firstChild) {
 		elDevGroups.removeChild(elDevGroups.firstChild);

@@ -2,11 +2,10 @@
 function nowTime() {
 	var d = new Date();
 	return pad2(d.getHours()) + ':' + pad2(d.getMinutes()) + ':' + pad2(d.getSeconds())
-		+ '.' + pad6(d.getMilliseconds() * 1000);
+		+ '.' + pad3(d.getMilliseconds());
 }
 function pad2(n) { return n < 10 ? '0' + n : '' + n; }
 function pad3(n) { return n < 10 ? '00' + n : n < 100 ? '0' + n : '' + n; }
-function pad6(n) { var s = '' + n; while (s.length < 6) s = '0' + s; return s; }
 
 /* Format a time string for display.
    Handles all server formats consistently:
@@ -28,72 +27,74 @@ function formatTime(t) {
 
 /* ---- Value formatting ---- */
 
-/* Smart format: O(1) lookup table dispatch.
-   Returns {text} or {dot} or null if no special formatting. */
-var VALUE_FORMATS = {
-	/* Temperature */
-	temperature_C:   function (v) { return {text: v + '\u00b0C'}; },
-	temperature_F:   function (v) { return {text: v + '\u00b0F'}; },
-	temperature_1_C: function (v) { return {text: v + '\u00b0C'}; },
-	temperature_2_C: function (v) { return {text: v + '\u00b0C'}; },
-	temperature_3_C: function (v) { return {text: v + '\u00b0C'}; },
-	temperature_4_C: function (v) { return {text: v + '\u00b0C'}; },
-	temperature_1_F: function (v) { return {text: v + '\u00b0F'}; },
-	temperature_2_F: function (v) { return {text: v + '\u00b0F'}; },
-	setpoint_C:      function (v) { return {text: v + '\u00b0C'}; },
-	/* Humidity & moisture */
+/* Special-case fields that cannot be derived from suffix patterns. */
+var SPECIAL_FORMATS = {
+	/* Dot indicators (non-text display) */
+	battery_ok:      function (v) { return {dot: (v === 1 || v === '1') ? 'batt-ok' : 'batt-low'}; },
+	/* Fields without unit suffix in name */
 	humidity:        function (v) { return {text: v + '%'}; },
 	humidity_1:      function (v) { return {text: v + '%'}; },
 	humidity_2:      function (v) { return {text: v + '%'}; },
 	moisture:        function (v) { return {text: v + '%'}; },
-	/* Battery */
-	battery_ok:      function (v) { return {dot: (v === 1 || v === '1') ? 'batt-ok' : 'batt-low'}; },
-	/* Wind */
-	wind_avg_km_h:   function (v) { return {text: v + ' km/h'}; },
-	wind_max_km_h:   function (v) { return {text: v + ' km/h'}; },
-	wind_avg_m_s:    function (v) { return {text: v + ' m/s'}; },
-	wind_max_m_s:    function (v) { return {text: v + ' m/s'}; },
-	wind_avg_mi_h:   function (v) { return {text: v + ' mph'}; },
-	wind_max_mi_h:   function (v) { return {text: v + ' mph'}; },
-	wind_dir_deg:    function (v) { return {text: v + '\u00b0'}; },
-	/* Rain */
-	rain_mm:         function (v) { return {text: v + ' mm'}; },
-	rain_in:         function (v) { return {text: v + ' in'}; },
-	rain_rate_mm_h:  function (v) { return {text: v + ' mm/h'}; },
-	rain_rate_in_h:  function (v) { return {text: v + ' in/h'}; },
-	/* Pressure */
-	pressure_hPa:    function (v) { return {text: v + ' hPa'}; },
-	pressure_kPa:    function (v) { return {text: v + ' kPa'}; },
-	pressure_PSI:    function (v) { return {text: v + ' PSI'}; },
-	pressure_bar:    function (v) { return {text: v + ' bar'}; },
-	/* Light & UV */
-	light_lux:       function (v) { return {text: v + ' lux'}; },
-	light_klx:       function (v) { return {text: v + ' klx'}; },
 	uvi:             function (v) { return {text: v + ' UV'}; },
 	uv_index:        function (v) { return {text: v + ' UV'}; },
-	/* Energy & power */
-	power_W:         function (v) { return {text: v + ' W'}; },
-	energy_kWh:      function (v) { return {text: v + ' kWh'}; },
-	current_A:       function (v) { return {text: v + ' A'}; },
-	voltage_V:       function (v) { return {text: v + ' V'}; },
-	/* Air quality */
-	co2_ppm:         function (v) { return {text: v + ' ppm'}; },
-	hcho_ppb:        function (v) { return {text: v + ' ppb'}; },
-	pm1_ug_m3:       function (v) { return {text: v + ' \u00b5g/m\u00b3'}; },
-	pm2_5_ug_m3:     function (v) { return {text: v + ' \u00b5g/m\u00b3'}; },
-	pm4_ug_m3:       function (v) { return {text: v + ' \u00b5g/m\u00b3'}; },
-	pm10_ug_m3:      function (v) { return {text: v + ' \u00b5g/m\u00b3'}; },
-	pm10_0_ug_m3:    function (v) { return {text: v + ' \u00b5g/m\u00b3'}; },
-	/* Volume & depth */
-	depth_cm:        function (v) { return {text: v + ' cm'}; },
-	volume_m3:       function (v) { return {text: v + ' m\u00b3'}; },
-	/* Distance (lightning/storm) */
 	storm_dist:      function (v) { return {text: v + ' km'}; },
 	strike_distance: function (v) { return {text: v + ' km'}; }
 };
+
+/* Suffix-to-unit mapping, ordered longest suffix first so the first
+   match wins.  This makes the webui self-adapting: any new device field
+   whose name ends with a recognised unit suffix is formatted automatically. */
+var SUFFIX_UNITS = [
+	/* Multi-char suffixes first (longest match wins) */
+	['_ug_m3', ' \u00b5g/m\u00b3'],   /* µg/m³ */
+	['_km_h',  ' km/h'],
+	['_mi_h',  ' mph'],
+	['_mm_h',  ' mm/h'],
+	['_in_h',  ' in/h'],
+	['_m_s',   ' m/s'],
+	['_kWh',   ' kWh'],
+	['_hPa',   ' hPa'],
+	['_kPa',   ' kPa'],
+	['_PSI',   ' PSI'],
+	['_klx',   ' klx'],
+	['_ppm',   ' ppm'],
+	['_ppb',   ' ppb'],
+	['_deg',   '\u00b0'],              /* ° */
+	['_pct',   '%'],
+	['_bar',   ' bar'],
+	['_gal',   ' gal'],
+	['_lux',   ' lux'],
+	['_mm',    ' mm'],
+	['_in',    ' in'],
+	['_cm',    ' cm'],
+	['_m3',    ' m\u00b3'],            /* m³ */
+	['_km',    ' km'],
+	['_dB',    ' dB'],
+	['_Hz',    ' Hz'],
+	['_mV',    ' mV'],
+	['_VA',    ' VA'],
+	['_C',     '\u00b0C'],             /* °C */
+	['_F',     '\u00b0F'],             /* °F */
+	['_W',     ' W'],
+	['_V',     ' V'],
+	['_A',     ' A'],
+	['_s',     ' s']
+];
+
+/* Smart format: special-case lookup then suffix-based pattern match.
+   Returns {text} or {dot} or null if no special formatting. */
 function smartFormatValue(key, val) {
-	var fn = VALUE_FORMATS[key];
-	return fn ? fn(val) : null;
+	var fn = SPECIAL_FORMATS[key];
+	if (fn) return fn(val);
+	for (var i = 0; i < SUFFIX_UNITS.length; i++) {
+		var sfx = SUFFIX_UNITS[i];
+		if (key.length > sfx[0].length &&
+		    key.indexOf(sfx[0], key.length - sfx[0].length) !== -1) {
+			return {text: val + sfx[1]};
+		}
+	}
+	return null;
 }
 
 /* ---- Unit-aware value parser ---- */
@@ -173,8 +174,8 @@ function modelColor(name) {
 function sigPct(db) {
 	var v = +db;
 	if (v !== v) return 0; /* NaN check */
-	if (v < 0) return Math.max(0, Math.min(100, ((v + 30) / 29) * 100));
-	return Math.max(0, Math.min(100, (v / 30) * 100));
+	if (v < 0) return Math.max(0, Math.min(100, ((v + SIG_DB_OFFSET) / SIG_DB_RANGE) * 100));
+	return Math.max(0, Math.min(100, (v / SIG_DB_OFFSET) * 100));
 }
 
 /* Build a signal-strength bar element from a message's rssi/snr.
@@ -188,8 +189,8 @@ function buildSigBar(msg) {
 	if (!_sigBarTpl) _sigBarTpl = document.createElement('span');
 	var pct = sigPct(sigVal);
 	var bar = _sigBarTpl.cloneNode(false);
-	bar.className = 'sig-bar ' + (pct > 60 ? 'sig-hi' : pct > 30 ? 'sig-mid' : 'sig-lo');
-	bar.style.width = Math.max(4, (pct * 0.6) | 0) + 'px';
+	bar.className = 'sig-bar ' + (pct > SIG_THRESH_HI ? 'sig-hi' : pct > SIG_THRESH_MID ? 'sig-mid' : 'sig-lo');
+	bar.style.width = Math.max(SIG_BAR_MIN_PX, (pct * 0.6) | 0) + 'px';
 	bar.title = sigVal + ' dB';
 	return bar;
 }
@@ -214,6 +215,11 @@ function downloadCSV(filename, content) {
 	a.click();
 	document.body.removeChild(a);
 	URL.revokeObjectURL(url);
+}
+
+/* ---- JSON parsing helper ---- */
+function tryParse(s) {
+	try { return JSON.parse(s); } catch (e) { return null; }
 }
 
 /* ---- Consolidated visible key filter ---- */
@@ -260,6 +266,7 @@ function ensureCells(tr, n) {
 /* Fill data columns of a Monitor/Device row from a message and key list.
    startIdx = index of first data cell in the TR. */
 function fillDataCells(tr, msg, dataKeys, startIdx) {
+	var _t0 = performance.now();
 	for (var c = 0; c < dataKeys.length; c++) {
 		var td = tr.childNodes[startIdx + c];
 		if (!td) break;
@@ -278,4 +285,5 @@ function fillDataCells(tr, msg, dataKeys, startIdx) {
 			td.textContent = (fmt && fmt.text) ? fmt.text : String(v);
 		}
 	}
+	perfMetrics.fillDataCellsMs += performance.now() - _t0;
 }

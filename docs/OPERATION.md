@@ -355,7 +355,7 @@ File content and format are detected by th extension, possible options are:
 Overrides can be prefixed to the actual filename, separated by colon (`:`).
 E.g. default detection by extension: path/filename.am.s16 and forced overrides: am:s16:path/filename.ext
 
-::: warning
+:::warning
 Note that not all file types are supported/applicable by loaders or dumpers.
 :::
 
@@ -382,7 +382,7 @@ A colorful, column based output intended for screen display.
 
 Append output to file with `:<filename>` (e.g. `-F kv:log.txt`), defaults to stdout.
 
-::: warning
+:::warning
 Note: the `kv` output is not a machine-readable key-value format, use the JSON output for that.
 :::
 
@@ -400,7 +400,7 @@ Use `-F csv` to add an output in CSV format.
 
 Append output to file with `:<filename>` (e.g. `-F csv:log.csv`), defaults to stdout.
 
-::: warning
+:::warning
 Note: the `csv` output is not recommended for post-processing, use the JSON output for a machine-readable format.
 :::
 
@@ -474,7 +474,7 @@ no external CDN, no downloaded fonts. It loads from memory in under 50 ms.
 Features:
 - **Monitor** — real-time scrolling event table with signal strength bars
 - **Protocols** — searchable list of all 290+ protocol decoders with enable/disable status
-- **Settings** — radio controls (frequency, gain, sample rate, PPM, hop interval) and output options
+- **Settings** — radio controls (frequency, sample rate, gain with device-reported range validation, PPM, hop interval, Bias-T) and output options
 - **Stats** — decoder statistics with auto-refresh
 - **System** — SDR device info, meta configuration, and active frequencies
 

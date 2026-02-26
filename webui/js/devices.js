@@ -1,7 +1,15 @@
 /* DEVICES TAB — device registry, rendering, sort, filter */
 
+onDisplayChange(function () {
+	for (var gm in devGroups) {
+		if (devGroups.hasOwnProperty(gm)) devGroups[gm].needsRebuild = true;
+	}
+	reRenderDeviceRows();
+});
+
 /* Update or create a device record from an incoming event */
 function updateDeviceRegistry(msg) {
+	var _t0 = performance.now();
 	var model = msg.model || '';
 	var id = (msg.id !== undefined && msg.id !== null) ? String(msg.id) : '';
 	var key = model + '::' + id;
@@ -10,6 +18,23 @@ function updateDeviceRegistry(msg) {
 
 	var dev = deviceRegistry[key];
 	if (!dev) {
+		/* Evict stalest device if at capacity */
+		if (deviceCount >= MAX_DEVICES) {
+			var oldestKey = null, oldestTs = Infinity;
+			for (var ek = 0; ek < deviceKeys.length; ek++) {
+				var ed = deviceRegistry[deviceKeys[ek]];
+				if (ed && ed.lastSeenTs < oldestTs) {
+					oldestTs = ed.lastSeenTs;
+					oldestKey = deviceKeys[ek];
+				}
+			}
+			if (oldestKey) {
+				delete deviceRegistry[oldestKey];
+				var idx = deviceKeys.indexOf(oldestKey);
+				if (idx !== -1) deviceKeys.splice(idx, 1);
+				deviceCount--;
+			}
+		}
 		dev = {
 			model: model,
 			id: id,
@@ -33,18 +58,17 @@ function updateDeviceRegistry(msg) {
 	dev.lastEvent = msg;
 	dev.events.push(msg);  /* O(1) amortized; newest at end */
 	if (dev.events.length > MAX_DEVICE_EVENTS) {
-		dev.events.splice(0, dev.events.length - MAX_DEVICE_EVENTS);
+		dev.events = dev.events.slice(-MAX_DEVICE_EVENTS);
 	}
 
 	/* Mark as recently active for green flash.
-	   Purge stale entries if map grows too large (Devices tab not active). */
+	   Purge stale entries periodically to prevent unbounded growth. */
 	devActiveKeys[key] = nowTs;
-	if (++devActiveCount > 500) {
+	if (Object.keys(devActiveKeys).length > DEV_ACTIVE_PURGE) {
 		var cutoff = nowTs - DEV_FLASH_MS;
 		for (var ak in devActiveKeys) {
-			if (devActiveKeys[ak] < cutoff) {
+			if (devActiveKeys.hasOwnProperty(ak) && devActiveKeys[ak] < cutoff) {
 				delete devActiveKeys[ak];
-				devActiveCount--;
 			}
 		}
 	}
@@ -52,6 +76,7 @@ function updateDeviceRegistry(msg) {
 	/* Record event in activity chart */
 	recordChartEvent(nowTs, msg);
 
+	perfMetrics.lastDevRegistryMs = performance.now() - _t0;
 	if (devicesTabActive) scheduleDevicesRender();
 }
 
@@ -83,9 +108,9 @@ function getSortedDeviceKeys() {
 		keys.push(key);
 	}
 
-	/* Sort */
-	var col = devSortCol;
-	var asc = devSortAsc;
+	/* Sort — default order when no explicit sort: most recently seen first */
+	var col = devSortCol || 'seen';
+	var asc = devSortCol ? devSortAsc : false;
 	keys.sort(function (a, b) {
 		var da = deviceRegistry[a];
 		var db = deviceRegistry[b];
@@ -272,7 +297,11 @@ function renderDeviceList() {
 
 	updateDevSortIndicators();
 
-	/* Apply green flash to recently-active rows across all groups */
+	/* Apply green flash to recently-active rows across all groups.
+	   Timer IDs are stored on the TR (_flashT1, _flashT2) so they can
+	   be cancelled when a row is replaced during group rebuilds.
+	   The timestamp check prevents stale timers from deleting keys
+	   that were refreshed by newer events (race condition guard). */
 	var nowMs = Date.now();
 	for (var gm2 in devGroups) {
 		if (!devGroups.hasOwnProperty(gm2)) continue;
@@ -285,16 +314,22 @@ function renderDeviceList() {
 				var age = nowMs - devActiveKeys[rKey];
 				if (age < DEV_FLASH_MS) {
 					if (rr.className.indexOf('dev-active') === -1 && rr.className.indexOf('dev-fade') === -1) {
+						/* Cancel any prior flash timers on this TR */
+						if (rr._flashT1) clearTimeout(rr._flashT1);
+						if (rr._flashT2) clearTimeout(rr._flashT2);
 						rr.className = 'dev-active';
-						(function (r, k) {
-							setTimeout(function () {
+						(function (r, k, ts) {
+							r._flashT1 = setTimeout(function () {
+								r._flashT1 = 0;
 								if (r.parentNode) r.className = 'dev-fade';
-							}, 50);
-							setTimeout(function () {
-								delete devActiveKeys[k];
+							}, DEV_FLASH_DELAY_MS);
+							r._flashT2 = setTimeout(function () {
+								r._flashT2 = 0;
+								/* Only clean up if no newer event refreshed the key */
+								if (devActiveKeys[k] === ts) delete devActiveKeys[k];
 								if (r.parentNode) r.className = '';
 							}, DEV_FLASH_MS);
-						})(rr, rKey);
+						})(rr, rKey, devActiveKeys[rKey]);
 					}
 				} else {
 					delete devActiveKeys[rKey];
@@ -342,35 +377,9 @@ function buildEvtColumnarRow(evt, dataKeys) {
 	return tr;
 }
 
-/* Toggle inline detail expansion for a device row (accordion style) */
-function toggleDeviceDetail(key, parentTr) {
-	/* If already expanded, collapse */
-	if (devDetailKey === key && parentTr._devDetailRow) {
-		if (parentTr._devDetailRow.parentNode) {
-			parentTr._devDetailRow.parentNode.removeChild(parentTr._devDetailRow);
-		}
-		parentTr._devDetailRow = null;
-		removeClass(parentTr, 'dev-row-expanded');
-		devDetailKey = null;
-		return;
-	}
-
-	/* Collapse any previously expanded row */
-	collapseDeviceDetail();
-
-	var dev = deviceRegistry[key];
-	if (!dev) return;
-	devDetailKey = key;
-	parentTr.className = (parentTr.className ? parentTr.className + ' ' : '') + 'dev-row-expanded';
-
-	/* Build inline detail sub-row */
-	var detailTr = document.createElement('tr');
-	detailTr.className = 'dev-detail-row';
-	/* Compute colspan from group's data columns */
-	var devGroup = devGroups[dev.model];
-	var devGroupCols = devGroup ? devGroup.dataKeys.length : 0;
-	var detailTd = document.createElement('td');
-	detailTd.setAttribute('colspan', '' + (3 + devGroupCols));
+/* Build device detail content for inline expansion */
+function buildDeviceDetailContent(dev) {
+	var wrap = document.createDocumentFragment();
 
 	/* Summary header */
 	var summary = document.createElement('div');
@@ -394,7 +403,7 @@ function toggleDeviceDetail(key, parentTr) {
 		span.appendChild(val);
 		summary.appendChild(span);
 	}
-	detailTd.appendChild(summary);
+	wrap.appendChild(summary);
 
 	/* Collect visible data keys across all events (column headers) */
 	var dataKeys = getVisibleEventKeys(dev.events);
@@ -465,16 +474,36 @@ function toggleDeviceDetail(key, parentTr) {
 		toggleMonitorDetail(tr, totalCols);
 	});
 
-	detailTd.appendChild(evtTable);
-	detailTr.appendChild(detailTd);
+	wrap.appendChild(evtTable);
+	return wrap;
+}
 
-	/* Insert after parent row */
-	parentTr._devDetailRow = detailTr;
-	if (parentTr.nextSibling) {
-		parentTr.parentNode.insertBefore(detailTr, parentTr.nextSibling);
-	} else {
-		parentTr.parentNode.appendChild(detailTr);
+/* Toggle inline detail expansion for a device row (accordion style) */
+function toggleDeviceDetail(key, parentTr) {
+	/* If already expanded, collapse */
+	if (devDetailKey === key && parentTr._devDetailRow) {
+		toggleDetailRow(parentTr, '_devDetailRow', 'dev-row-expanded', 'dev-detail-row', 1, function () {
+			return document.createDocumentFragment();
+		});
+		devDetailKey = null;
+		return;
 	}
+
+	/* Collapse any previously expanded row */
+	collapseDeviceDetail();
+
+	var dev = deviceRegistry[key];
+	if (!dev) return;
+	devDetailKey = key;
+
+	/* Compute colspan from group's data columns */
+	var devGroup = devGroups[dev.model];
+	var devGroupCols = devGroup ? devGroup.dataKeys.length : 0;
+	var colspan = 3 + devGroupCols;
+
+	toggleDetailRow(parentTr, '_devDetailRow', 'dev-row-expanded', 'dev-detail-row', colspan, function () {
+		return buildDeviceDetailContent(dev);
+	});
 }
 
 /* Collapse any currently expanded device detail */

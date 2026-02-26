@@ -87,10 +87,10 @@ hydrasdr_433 -F http # start with embedded web UI
 ```
 
 Open `http://127.0.0.1:8433/` in any browser.
-Workspace tabs (Monitor, Devices, Syslog, Protocols, Stats, System) plus 3 overlay panels (Help, Settings, Debug) provide real-time event monitoring, device tracking with activity charts, protocol browser, radio settings, decoder statistics, and system information.
+Workspace tabs (Monitor, Devices, Syslog, Protocols, Stats, System) plus 3 overlay panels (Help, Settings, Debug) provide real-time event monitoring, device tracking with activity charts, protocol browser with modulation details (OOK-PCM, FSK-MC, etc.), configurable limits, radio settings, decoder statistics, and system information.
 
-Vanilla ES5 JavaScript, 12 modular source files concatenated at build time into a single IIFE.
-Total embedded size: **~52 KB** (gzipped).
+Vanilla ES5 JavaScript, 15 modular source files concatenated and minified at build time into a single IIFE.
+All assets minified and gzip-compressed, total embedded size **< 50 KB**.
 Zero external dependencies.
 Works offline.
 

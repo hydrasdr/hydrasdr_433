@@ -1,8 +1,3 @@
-/* ---- JSON parsing helper ---- */
-function tryParse(s) {
-	try { return JSON.parse(s); } catch (e) { return null; }
-}
-
 /* ---- Header info ---- */
 function updateHeaderFromMeta(m) {
 	if (!m) return;
@@ -14,7 +9,10 @@ function updateHeaderFromMeta(m) {
 	} else if (m.center_frequency) {
 		parts.push(fmtFreq(m.center_frequency));
 	}
-	if (m.samp_rate) parts.push((m.samp_rate / 1e3).toFixed(0) + ' kS/s');
+	if (m.samp_rate) parts.push(fmtSrate(m.samp_rate) + 'S/s');
+	if (hdrGainStr) parts.push(hdrGainStr);
+	parts.push('Bias-T ' + (hdrBiasTee ? 'ON' : 'OFF'));
+	if (hdrHopInterval > 0) parts.push('Hop ' + hdrHopInterval + 's');
 	elInfo.textContent = parts.join('  |  ');
 }
 
@@ -57,60 +55,6 @@ function populateSettingsFromMeta(m) {
 	   Display flags default to false (simplified view). */
 }
 
-/* ---- System meta display ---- */
-/* Map meta keys to human-friendly labels and formatters */
-var META_LABELS = {
-	samp_rate:               ['Sample rate',      function (v) { return fmtSrate(v) + 'S/s'; }],
-	conversion_mode:         ['Conversion',       function (v) { return ['Native', 'SI', 'Customary'][v] || v; }],
-	fsk_pulse_detect_mode:   ['FSK pulse detect', null],
-	report_time:             ['Report time',      function (v) { return v ? 'Yes' : 'No'; }],
-	report_time_hires:       ['Hi-res time',      function (v) { return v ? 'On' : 'Off'; }],
-	report_time_utc:         ['UTC time',         function (v) { return v ? 'On' : 'Off'; }],
-	report_meta:             ['Signal level',     function (v) { return v ? 'On' : 'Off'; }],
-	report_protocol:         ['Protocol #',       function (v) { return v ? 'On' : 'Off'; }],
-	report_description:      ['Description',      function (v) { return v ? 'On' : 'Off'; }],
-	stats_interval:          ['Stats interval',   function (v) { return v ? v + 's' : 'Off'; }],
-	duration:                ['Duration',         function (v) { return v ? v + 's' : 'Continuous'; }]
-};
-
-function updateSystemMeta(m) {
-	var lines = [];
-	for (var key in META_LABELS) {
-		if (m[key] === undefined) continue;
-		var label = META_LABELS[key][0];
-		var fmt = META_LABELS[key][1];
-		var val = fmt ? fmt(m[key]) : m[key];
-		lines.push(label + ': ' + val);
-	}
-	elSysMeta.textContent = lines.join('\n') || '--';
-
-	/* Channelizer / wideband section */
-	var wbSection = $('sys-wb-section');
-	if (m.wideband_mode) {
-		var wbLines = [];
-		wbLines.push('Mode: Wideband (-B)');
-		wbLines.push('Center: ' + fmtFreq(m.wideband_center));
-		wbLines.push('Bandwidth: ' + fmtBW(m.wideband_bandwidth));
-		wbLines.push('Channels: ' + m.wideband_channels);
-		wbLines.push('Channel spacing: ' + fmtBW(m.wideband_bandwidth / m.wideband_channels));
-		wbLines.push('Channel rate: ' + fmtBW(2 * m.samp_rate / m.wideband_channels) + 'ps');
-		$('sys-wb').textContent = wbLines.join('\n');
-		wbSection.style.display = '';
-	} else {
-		wbSection.style.display = 'none';
-	}
-
-	if (m.frequencies) {
-		var frag = document.createDocumentFragment();
-		for (var f = 0; f < m.frequencies.length; f++) {
-			var chip = mkEl('span', 'freq-chip' + (m.frequencies[f] === m.center_frequency ? ' active' : ''), fmtFreq(m.frequencies[f]));
-			frag.appendChild(chip);
-		}
-		elSysFreqs.innerHTML = '';
-		elSysFreqs.appendChild(frag);
-	}
-}
-
 /* ---- Refresh header + settings from server after a setting change ---- */
 function refreshMeta() {
 	rpc('get_meta', null, function (r) {
@@ -137,6 +81,29 @@ function refreshMeta() {
 /* ---- Gain mode state ---- */
 var gainMode = 'auto'; /* 'auto' | 'linearity' | 'sensitivity' */
 
+/* Apply min/max/step/placeholder from device gain ranges to the input */
+function applyGainInputRange() {
+	var el = $('s-gain');
+	var gr = gainRanges[gainMode];
+	if (gr && gr.max > 0) {
+		el.type = 'number';
+		el.min = gr.min;
+		el.max = gr.max;
+		el.step = gr.step || 1;
+		el.placeholder = gr.def || gr.min;
+		el.title = gainMode.charAt(0).toUpperCase() + gainMode.slice(1) +
+			' gain: ' + gr.min + '\u2013' + gr.max +
+			(gr.step > 1 ? ' (step ' + gr.step + ')' : '');
+	} else {
+		el.type = (gainMode === 'auto') ? 'text' : 'number';
+		el.removeAttribute('min');
+		el.removeAttribute('max');
+		el.step = '1';
+		el.placeholder = (gainMode === 'auto') ? '' : '10';
+		el.title = '';
+	}
+}
+
 function selectGainMode(mode) {
 	gainMode = mode;
 	var btns = document.querySelectorAll('.btn-gain');
@@ -144,6 +111,7 @@ function selectGainMode(mode) {
 		toggleClass(btns[i], 'active', btns[i].getAttribute('data-gain-mode') === mode);
 	$('s-gain').disabled = (mode === 'auto');
 	if (mode === 'auto') $('s-gain').value = '';
+	applyGainInputRange();
 }
 
 /* Mode button click */
@@ -152,6 +120,18 @@ bindAll('.btn-gain', 'click', function (e) {
 });
 
 /* ---- Apply buttons, presets, enter-key ---- */
+
+/* ---- RPC result handler: toast + optional follow-up ---- */
+function rpcToast(label, afterOk) {
+	return function (result, error) {
+		if (error) {
+			showToast(label + ': ' + (error.message || 'Error'), 'err');
+		} else {
+			showToast(label, 'ok');
+			if (afterOk) afterOk();
+		}
+	};
+}
 
 var applyHandlers = {
 	freq: function () {
@@ -162,8 +142,9 @@ var applyHandlers = {
 		if (!isNaN(parsed) && parsed > 0) {
 			hz = Math.round(parsed);
 			/* If bare number < 10000, assume MHz (e.g. "433.92" → 433920000) */
-			if (hz < 10000) hz = Math.round(parseFloat(raw) * 1e6);
+			if (hz < FREQ_MHZ_THRESH) hz = Math.round(parseFloat(raw) * 1e6);
 		} else {
+			showToast('Invalid frequency', 'warn');
 			return;
 		}
 		/* Guard: don't let refreshMeta overwrite this field */
@@ -174,50 +155,76 @@ var applyHandlers = {
 			if (metaCache.frequencies) metaCache.frequencies[0] = hz;
 		}
 		updateHeaderFromMeta(metaCache);
-		rpc('center_frequency', {val: hz}, function () { refreshMeta(); refreshStats(); });
+		rpc('center_frequency', {val: hz}, rpcToast('Frequency set to ' + fmtFreq(hz), function () {
+			refreshMeta(); refreshStats();
+		}));
 	},
 	gain: function () {
 		var arg;
 		if (gainMode === 'auto') {
 			arg = '0';
+			hdrGainStr = 'AGC Auto';
 		} else {
 			var v = $('s-gain').value.trim();
-			if (v === '') return;
-			arg = gainMode + '=' + v;
+			if (v === '') {
+				showToast('Enter a gain value', 'warn');
+				return;
+			}
+			var gv = parseInt(v, 10);
+			var gr = gainRanges[gainMode];
+			if (isNaN(gv) || (gr && gr.max > 0 && (gv < gr.min || gv > gr.max))) {
+				showToast('Gain must be ' + (gr && gr.max > 0 ? gr.min + '\u2013' + gr.max : 'a valid number'), 'warn');
+				return;
+			}
+			arg = gainMode + '=' + gv;
+			hdrGainStr = gainMode.charAt(0).toUpperCase() + gainMode.slice(1) + ' ' + gv;
 		}
-		rpc('gain', {arg: arg}, function () { refreshMeta(); });
+		var label = gainMode === 'auto' ? 'Gain set to Auto' : 'Gain set to ' + arg;
+		updateHeaderFromMeta(metaCache);
+		rpc('gain', {arg: arg}, rpcToast(label, refreshMeta));
 	},
 	srate: function () {
 		var raw = $('s-srate').value.trim();
 		var hz = parseValueWithUnit(raw);
 		/* If bare number without suffix and small, assume it's meant as-is (Hz) */
-		if (isNaN(hz) || hz <= 0) return;
+		if (isNaN(hz) || hz <= 0) {
+			showToast('Invalid sample rate', 'warn');
+			return;
+		}
 		hz = Math.round(hz);
 		/* Guard: don't let refreshMeta overwrite this field */
 		guardSetting('srate');
 		if (metaCache) metaCache.samp_rate = hz;
 		updateHeaderFromMeta(metaCache);
-		rpc('sample_rate', {val: hz}, function () { refreshMeta(); refreshStats(); });
+		rpc('sample_rate', {val: hz}, rpcToast('Sample rate set to ' + fmtSrate(hz) + 'S/s', function () {
+			refreshMeta(); refreshStats();
+		}));
 	},
 	ppm: function () {
 		var v = parseInt($('s-ppm').value, 10);
-		rpc('ppm_error', {val: v});
+		if (isNaN(v)) { showToast('Invalid PPM value', 'warn'); return; }
+		rpc('ppm_error', {val: v}, rpcToast('PPM set to ' + v));
 	},
 	hop: function () {
 		var v = parseInt($('s-hop').value, 10);
-		if (v >= 0) rpc('hop_interval', {val: v});
+		if (isNaN(v) || v < 0) { showToast('Invalid hop interval', 'warn'); return; }
+		hdrHopInterval = v;
+		updateHeaderFromMeta(metaCache);
+		rpc('hop_interval', {val: v}, rpcToast('Hop interval set to ' + v + 's'));
 	},
 	convert: function () {
 		var v = parseInt($('s-convert').value, 10);
-		rpc('convert', {val: v});
+		var labels = ['Native', 'SI', 'Customary'];
+		rpc('convert', {val: v}, rpcToast('Conversion: ' + (labels[v] || v)));
 	},
 	verbosity: function () {
 		var v = parseInt($('s-verbosity').value, 10);
-		rpc('verbosity', {val: v});
+		rpc('verbosity', {val: v}, rpcToast('Verbosity set to ' + v));
 	},
 	wideband: function () {
 		var v = $('s-wideband').value.trim();
-		if (v !== '') rpc('wideband', {arg: v}, function () { refreshMeta(); });
+		if (v === '') { showToast('Enter a wideband spec', 'warn'); return; }
+		rpc('wideband', {arg: v}, rpcToast('Wideband: ' + v, refreshMeta));
 	}
 };
 
@@ -244,7 +251,8 @@ bindAll('.btn-preset', 'click', function (e) {
 	var wb = btn.getAttribute('data-wideband');
 	if (wb) {
 		$('s-wideband').value = (wb === 'off') ? '' : wb;
-		rpc('wideband', {arg: wb}, function () { refreshMeta(); });
+		var label = (wb === 'off') ? 'Wideband off' : 'Wideband: ' + wb;
+		rpc('wideband', {arg: wb}, rpcToast(label, refreshMeta));
 	}
 });
 
@@ -277,25 +285,66 @@ for (var mi = 0; mi < metaToggles.length; mi++) {
 			else if (arg === 'protocol') showMetaProto = this.checked;
 			else if (arg === 'description') showMetaDesc = this.checked;
 			else if (arg === 'hires') showMetaHires = this.checked;
-			/* Mark all groups dirty for full re-render */
-			var gm;
-			for (gm in monGroups) {
-				if (monGroups.hasOwnProperty(gm)) monGroups[gm].needsRebuild = true;
-			}
-			for (gm in devGroups) {
-				if (devGroups.hasOwnProperty(gm)) devGroups[gm].needsRebuild = true;
-			}
-			reRenderMonitorRows();
-			reRenderDeviceRows();
-			reRenderSyslogRows();
+			notifyDisplayChange();
 		});
 	})(metaToggles[mi][0], metaToggles[mi][1]);
 }
 
 /* Bias-T checkbox */
 $('s-biastee').addEventListener('change', function () {
-	rpc('biastee', {val: this.checked ? 1 : 0});
+	var on = this.checked;
+	hdrBiasTee = on;
+	updateHeaderFromMeta(metaCache);
+	rpc('biastee', {val: on ? 1 : 0}, rpcToast('Bias-T ' + (on ? 'enabled' : 'disabled')));
 });
+
+/* ---- Configurable limits (persisted to localStorage) ---- */
+var LIMIT_DEFS = [
+	{id: 's-lim-events',     key: 'lim_events',     varName: 'MAX_EVENTS',        min: 50, max: 10000},
+	{id: 's-lim-devices',    key: 'lim_devices',     varName: 'MAX_DEVICES',       min: 50, max: 5000},
+	{id: 's-lim-dev-events', key: 'lim_dev_events',  varName: 'MAX_DEVICE_EVENTS', min: 20, max: 2000},
+	{id: 's-lim-syslog',     key: 'lim_syslog',      varName: 'SYSLOG_MAX',        min: 50, max: 2000},
+	{id: 's-lim-chart',      key: 'lim_chart',       varName: 'CHART_MAX_EVENTS',  min: 500, max: 20000}
+];
+
+/* Map var names to their global references for assignment */
+function setLimitVar(name, val) {
+	if (name === 'MAX_EVENTS')        MAX_EVENTS = val;
+	else if (name === 'MAX_DEVICES')  MAX_DEVICES = val;
+	else if (name === 'MAX_DEVICE_EVENTS') MAX_DEVICE_EVENTS = val;
+	else if (name === 'SYSLOG_MAX')   SYSLOG_MAX = val;
+	else if (name === 'CHART_MAX_EVENTS') CHART_MAX_EVENTS = val;
+}
+
+function getLimitVar(name) {
+	if (name === 'MAX_EVENTS')        return MAX_EVENTS;
+	if (name === 'MAX_DEVICES')       return MAX_DEVICES;
+	if (name === 'MAX_DEVICE_EVENTS') return MAX_DEVICE_EVENTS;
+	if (name === 'SYSLOG_MAX')        return SYSLOG_MAX;
+	if (name === 'CHART_MAX_EVENTS')  return CHART_MAX_EVENTS;
+	return 0;
+}
+
+/* Load saved limits from localStorage; populate inputs */
+for (var li = 0; li < LIMIT_DEFS.length; li++) {
+	(function (def) {
+		var saved = null;
+		try { saved = localStorage.getItem('hydrasdr_' + def.key); } catch (e) {}
+		if (saved !== null) {
+			var v = parseInt(saved, 10);
+			if (!isNaN(v) && v >= def.min && v <= def.max) setLimitVar(def.varName, v);
+		}
+		$(def.id).value = getLimitVar(def.varName);
+		$(def.id).addEventListener('change', function () {
+			var v = parseInt(this.value, 10);
+			if (isNaN(v) || v < def.min) v = def.min;
+			if (v > def.max) v = def.max;
+			this.value = v;
+			setLimitVar(def.varName, v);
+			try { localStorage.setItem('hydrasdr_' + def.key, v); } catch (e) {}
+		});
+	})(LIMIT_DEFS[li]);
+}
 
 /* ---- Debug enable checkbox in Settings → Advanced ---- */
 if (elDbgCheckbox) {

@@ -33,7 +33,8 @@ function createGroupBase(model, opts) {
 		var th = document.createElement('th');
 		th.className = c.cls;
 		th.setAttribute(opts.sortAttr, c.sort);
-		th.innerHTML = c.label + ' <span class="sort-ind"></span>';
+		th.appendChild(document.createTextNode(c.label + ' '));
+		th.appendChild(mkEl('span', 'sort-ind'));
 		theadTr.appendChild(th);
 	}
 	thead.appendChild(theadTr);
@@ -128,7 +129,7 @@ function createDevGroup(model) {
 			{ cls: 'col-dev-count sortable', sort: 'count', label: 'Events' }
 		],
 		onSort: function (col) {
-			var s = cycleSortState(devSortCol, devSortAsc, col, 'seen', false);
+			var s = cycleSortState(devSortCol, devSortAsc, col);
 			devSortCol = s.col;
 			devSortAsc = s.asc;
 			renderDeviceList();
@@ -170,6 +171,69 @@ function updateGroupDataKeys(group, items, getMsgFn) {
 		}
 	}
 	return changed;
+}
+
+/* ---- Collapse/Expand all groups ---- */
+
+/* Toggle all groups in a registry between collapsed and expanded.
+   btn = the button element (text toggles between "Collapse All" / "Expand All").
+   groups = the group registry object (monGroups or devGroups). */
+function toggleAllGroups(btn, groups) {
+	/* Determine current state: if any group is expanded, collapse all */
+	var anyExpanded = false;
+	for (var m in groups) {
+		if (!groups.hasOwnProperty(m)) continue;
+		if (!hasClass(groups[m].el, 'group-collapsed')) {
+			anyExpanded = true;
+			break;
+		}
+	}
+	for (var m2 in groups) {
+		if (!groups.hasOwnProperty(m2)) continue;
+		var g = groups[m2];
+		var toggle = g.hdr.querySelector('.group-toggle');
+		if (anyExpanded) {
+			addClass(g.el, 'group-collapsed');
+			if (toggle) toggle.textContent = '\u25B6';
+		} else {
+			removeClass(g.el, 'group-collapsed');
+			if (toggle) toggle.textContent = '\u25BC';
+		}
+	}
+	btn.textContent = anyExpanded ? 'Expand All' : 'Collapse All';
+}
+
+$('mon-collapse-all').addEventListener('click', function () {
+	toggleAllGroups(this, monGroups);
+});
+$('dev-collapse-all').addEventListener('click', function () {
+	toggleAllGroups(this, devGroups);
+});
+
+/* Shared detail-row toggle: collapse if expanded, else expand.
+   prop     = TR property name ('_detailRow', '_devDetailRow', etc.)
+   expCls   = class added to parent TR when expanded
+   detCls   = class for the detail TR
+   colspan  = number of columns to span
+   builder  = function() returning content DOM node */
+function toggleDetailRow(tr, prop, expCls, detCls, colspan, builder) {
+	if (tr[prop]) {
+		if (tr[prop].parentNode) tr[prop].parentNode.removeChild(tr[prop]);
+		tr[prop] = null;
+		removeClass(tr, expCls);
+		return;
+	}
+	addClass(tr, expCls);
+	var detailTr = document.createElement('tr');
+	detailTr.className = detCls;
+	var detailTd = document.createElement('td');
+	detailTd.setAttribute('colspan', '' + colspan);
+	detailTd.appendChild(builder());
+	detailTr.appendChild(detailTd);
+	var next = tr.nextSibling;
+	if (next) tr.parentNode.insertBefore(detailTr, next);
+	else tr.parentNode.appendChild(detailTr);
+	tr[prop] = detailTr;
 }
 
 /* Rebuild a group's <thead> with current data columns */

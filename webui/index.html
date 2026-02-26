@@ -29,11 +29,12 @@
 <!-- Monitor tab -->
 <div id="tab-monitor" class="panel active">
 	<div id="mon-bar" class="bar">
+		<input id="mon-filter" class="filter-input" type="text" placeholder="Filter by model..." title="Filter events by model name (F)">
 		<span id="mon-count">0 events</span>
 		<span id="mon-rate" title="Events per second">0.0 evt/s</span>
 		<label id="mon-autoscroll-lbl"><input type="checkbox" id="mon-autoscroll" checked> Auto-scroll</label>
+		<button id="mon-collapse-all" class="btn-sm" title="Collapse or expand all model groups">Expand All</button>
 		<button id="mon-export" class="btn-sm">Export CSV</button>
-		<input id="mon-filter" class="filter-input" type="text" placeholder="Filter by model..." title="Filter events by model name (F)">
 	</div>
 	<div id="mon-chart-wrap">
 		<canvas id="mon-chart"></canvas>
@@ -52,6 +53,8 @@
 		<input id="proto-search" type="text" placeholder="Filter protocols...">
 		<span id="proto-mod-counts"></span>
 		<span id="proto-count"></span>
+		<button id="proto-enable-all" class="btn-sm" title="Enable all protocols">Enable All</button>
+		<button id="proto-disable-all" class="btn-sm" title="Disable all protocols">Disable All</button>
 	</div>
 	<div id="proto-wrap">
 		<table id="proto-table">
@@ -91,18 +94,6 @@
 				</div>
 			</div>
 			<div class="field">
-				<label>Gain</label>
-				<div class="gain-mode-row">
-					<button class="btn-gain active" data-gain-mode="auto">Auto</button>
-					<button class="btn-gain" data-gain-mode="linearity">Linearity</button>
-					<button class="btn-gain" data-gain-mode="sensitivity">Sensitivity</button>
-				</div>
-				<div class="field-row" id="gain-val-row">
-					<input id="s-gain" type="text" placeholder="10" disabled>
-					<button class="btn-apply" data-apply="gain">Apply</button>
-				</div>
-			</div>
-			<div class="field">
 				<label for="s-srate">Sample rate (e.g. 250k, 1M)</label>
 				<div class="field-row">
 					<input id="s-srate" type="text" placeholder="250k">
@@ -112,6 +103,18 @@
 					<button class="btn-preset" data-srate="250000">250k</button>
 					<button class="btn-preset" data-srate="1000000">1M</button>
 					<button class="btn-preset" data-srate="2000000">2M</button>
+				</div>
+			</div>
+			<div class="field">
+				<label>Gain</label>
+				<div class="gain-mode-row">
+					<button class="btn-gain active" data-gain-mode="auto">Auto</button>
+					<button class="btn-gain" data-gain-mode="linearity">Linearity</button>
+					<button class="btn-gain" data-gain-mode="sensitivity">Sensitivity</button>
+				</div>
+				<div class="field-row" id="gain-val-row">
+					<input id="s-gain" type="number" step="1" disabled>
+					<button class="btn-apply" data-apply="gain">Apply</button>
 				</div>
 			</div>
 			<div class="field">
@@ -182,6 +185,39 @@
 			</div>
 		</fieldset>
 		<fieldset>
+			<legend>Limits</legend>
+			<div class="field">
+				<label>Monitor events per group</label>
+				<div class="field-row">
+					<input id="s-lim-events" type="number" min="50" max="10000" step="50" title="Max events per model group in Monitor tab">
+				</div>
+			</div>
+			<div class="field">
+				<label>Max tracked devices</label>
+				<div class="field-row">
+					<input id="s-lim-devices" type="number" min="50" max="5000" step="50" title="Max unique devices before stale eviction">
+				</div>
+			</div>
+			<div class="field">
+				<label>Device event history</label>
+				<div class="field-row">
+					<input id="s-lim-dev-events" type="number" min="20" max="2000" step="10" title="Max events stored per device">
+				</div>
+			</div>
+			<div class="field">
+				<label>Syslog entries</label>
+				<div class="field-row">
+					<input id="s-lim-syslog" type="number" min="50" max="2000" step="50" title="Max syslog entries retained">
+				</div>
+			</div>
+			<div class="field">
+				<label>Chart event dots</label>
+				<div class="field-row">
+					<input id="s-lim-chart" type="number" min="500" max="20000" step="500" title="Max event dots on activity chart">
+				</div>
+			</div>
+		</fieldset>
+		<fieldset>
 			<legend>Advanced</legend>
 			<div class="field">
 				<div class="check-group">
@@ -247,7 +283,7 @@
 				<dt>Syslog</dt>
 				<dd>Server log messages color-coded by severity (FATAL, ERROR, WARNING, INFO, etc.). Filterable and sortable by column.</dd>
 				<dt>Protocols</dt>
-				<dd>All supported protocol decoders with modulation type (OOK/FSK) and enabled status. Sortable columns. Click to expand signal parameters and output fields.</dd>
+				<dd>All supported protocol decoders with modulation type and coding (OOK-PCM, OOK-PPM, OOK-PWM, FSK-PCM, FSK-MC, etc.) and enabled status. Sortable columns. Click to expand signal parameters and output fields.</dd>
 				<dt>Settings</dt>
 				<dd>Draggable floating overlay for radio configuration (frequency, gain, sample rate, PPM, hop interval) with presets, and display-only report option toggles. Stays visible while other tabs are active.</dd>
 				<dt>Stats</dt>
@@ -285,9 +321,9 @@
 			</dl>
 			<h2>Chart Controls</h2>
 			<table class="help-keys">
-				<tr><td>Mouse wheel</td><td>Zoom in/out anchored at cursor (1 ms to 60 min range)</td></tr>
+				<tr><td>Mouse wheel</td><td>Zoom in/out anchored at cursor (100 ms to 60 min range)</td></tr>
 				<tr><td><kbd>Shift</kbd> + drag</td><td>Rubber-band zoom: select a time range to zoom into</td></tr>
-				<tr><td>Click + drag</td><td>Pan through time (drag right = forward, left = back)</td></tr>
+				<tr><td>Click + drag</td><td>Pan through time (drag right = back in time, left = forward)</td></tr>
 				<tr><td>Double-click</td><td>Return to live mode (right edge = now)</td></tr>
 				<tr><td>Scrollbar</td><td>Quick navigation across the full time range</td></tr>
 				<tr><td>Zoom Reset button</td><td>Reset zoom and pan to defaults</td></tr>
@@ -301,13 +337,15 @@
 				<dt>Event Groups</dt>
 				<dd>Events are grouped by model name. Each group has a collapsible header showing the model name (color-coded) and event count. Click the header to expand or collapse.</dd>
 				<dt>Dynamic Columns</dt>
-				<dd>Data columns are added automatically as new fields appear in events (temperature, humidity, pressure, etc.). Up to 500 events are kept per model group.</dd>
+				<dd>Data columns are added automatically as new fields appear in events (temperature, humidity, pressure, etc.). Events per model group are limited by the configurable limit in Settings &gt; Limits (default 500).</dd>
 				<dt>Filter</dt>
 				<dd>Type in the filter box (or press <kbd>F</kbd>) to show only matching model groups. The border highlights when a filter is active. Press <kbd>Esc</kbd> to clear.</dd>
 				<dt>Sort</dt>
 				<dd>Click column headers (Time, ID, or any data column) to sort within each group. First click sorts ascending, second click descending, third click returns to arrival order.</dd>
+				<dt>Collapse / Expand All</dt>
+				<dd>Toggle button in the toolbar to collapse or expand all model groups at once.</dd>
 				<dt>Pause</dt>
-				<dd>The Pause button is in the Devices toolbar. Click it or press <kbd>Space</kbd> to freeze everything &mdash; Monitor, activity chart, and device updates all stop. Events arriving during pause are buffered. On Resume, all buffered events appear at once (nothing is lost).</dd>
+				<dd>The Pause button is in the Devices toolbar. Click it or press <kbd>Space</kbd> to freeze everything &mdash; Monitor, activity chart, and device updates all stop. Events arriving during pause are buffered (up to 5000). On Resume, all buffered events appear at once.</dd>
 				<dt>Event Rate</dt>
 				<dd>The toolbar shows the live event rate (events per second) calculated over a 5-second rolling window.</dd>
 				<dt>Signal Bar</dt>
@@ -334,24 +372,28 @@
 				<dt>Sort</dt>
 				<dd>Click column headers (ID, Last Seen, Count, or any data column) to sort within each group. First click sorts ascending, second click descending, third click returns to default order.</dd>
 				<dt>Device Detail</dt>
-				<dd>Click a device row to expand its summary (model, ID, first/last seen, event count) and paginated event history (20 per page, up to 200 stored). Click any event row to expand all fields. Click the device row again or press <kbd>Esc</kbd> to collapse.</dd>
+				<dd>Click a device row to expand its summary (model, ID, first/last seen, event count) and paginated event history (20 per page, configurable limit in Settings &gt; Limits, default 200). Click any event row to expand all fields. Click the device row again or press <kbd>Esc</kbd> to collapse.</dd>
+				<dt>Collapse / Expand All</dt>
+				<dd>Toggle button in the toolbar to collapse or expand all model groups at once.</dd>
 				<dt>Export CSV</dt>
-				<dd>Downloads the device list with model, ID, first seen, last seen, event count, and latest data values.</dd>
+				<dd>Downloads the device list with model, ID, first seen, last seen, and event count.</dd>
 			<dt>Pause / Clear</dt>
-				<dd>Pause/Resume and Clear buttons are in the Devices toolbar. Pause freezes everything (Monitor, chart, devices) and buffers incoming events &mdash; Resume replays them all at once. Clear resets all events and devices.</dd>
+				<dd>Pause/Resume and Clear buttons are in the Devices toolbar. Pause freezes everything (Monitor, chart, devices) and buffers incoming events (up to 5000) &mdash; Resume replays them all at once. Clear resets all events and devices.</dd>
 			</dl>
 		</section>
 		<section class="help-section">
 			<h2>Syslog</h2>
 			<dl class="help-dl">
 				<dt>Log Display</dt>
-				<dd>Shows server log messages with timestamp, source component, severity level, and message text. Up to 200 entries are retained.</dd>
+				<dd>Shows server log messages with timestamp, source component, severity level, and message text. Entry limit is configurable in Settings &gt; Limits (default 200).</dd>
 				<dt>Severity Colors</dt>
 				<dd>FATAL/CRITICAL: red background. ERROR: red text. WARNING: orange. NOTICE: blue. INFO: gray. DEBUG/TRACE: dark gray.</dd>
 				<dt>Sort</dt>
 				<dd>Click column headers (Time, Source, Level, Message) to sort. First click sorts ascending, second click descending, third click returns to arrival order. New entries appear in correct sorted position when sort is active.</dd>
 				<dt>Filter</dt>
 				<dd>Type to search log text, source, or level name. Matching entries are shown; others are hidden. Works together with sorting.</dd>
+				<dt>Clear</dt>
+				<dd>Removes all syslog entries from the display.</dd>
 				<dt>Export CSV</dt>
 				<dd>Downloads all syslog entries with timestamp, source, level, and message text.</dd>
 			</dl>
@@ -360,12 +402,14 @@
 			<h2>Protocols</h2>
 			<dl class="help-dl">
 				<dt>Protocol List</dt>
-				<dd>All supported decoders with number, name, modulation type (OOK = green, FSK = blue), and enabled/disabled status. Disabled protocols appear dimmed.</dd>
+				<dd>All supported decoders with number, name, modulation and coding type (OOK-PCM, OOK-PPM, OOK-PWM = green; FSK-PCM, FSK-MC = blue), and enabled/disabled status. Disabled protocols appear dimmed.</dd>
 				<dt>Search</dt>
 				<dd>Filter by protocol name or number. Modulation counts (OOK/FSK) are shown in the toolbar. Works together with sorting.</dd>
 				<dt>Sort</dt>
 				<dd>Click column headers (#, Name, Mod, Enabled) to sort. First click sorts ascending, second click descending, third click returns to default order.</dd>
-				<dt>Protocol Detail</dt>
+				<dt>Enable / Disable</dt>
+				<dd>Click the green/grey dot in the Enabled column to toggle a protocol on or off at runtime. The change takes effect immediately on the server. Enable All / Disable All buttons in the toolbar toggle all protocols in batch.</dd>
+			<dt>Protocol Detail</dt>
 				<dd>Click a protocol row to expand its output fields, signal parameters (short/long/reset/gap/sync), and other properties.</dd>
 			</dl>
 		</section>
@@ -373,7 +417,9 @@
 			<h2>Settings</h2>
 			<dl class="help-dl">
 				<dt>Radio</dt>
-				<dd>Center frequency (MHz), gain (Auto/Linearity/Sensitivity modes), sample rate, PPM error, hop interval, and bias-T toggle. Each has an Apply button and supports <kbd>Enter</kbd> to apply. Frequency and sample rate have preset buttons for common values.</dd>
+				<dd>Center frequency (MHz), sample rate, gain (Auto/Linearity/Sensitivity modes with device-reported min/max/step validation), PPM error, hop interval, and bias-T toggle. Each has an Apply button and supports <kbd>Enter</kbd> to apply. Frequency and sample rate have preset buttons for common values. The header bar shows a live summary: frequency, sample rate, gain mode, Bias-T status, and hop interval.</dd>
+				<dt>Wideband</dt>
+				<dd>Wideband scanning spec (center:bandwidth:channels). Presets for 433 EU, 915 US, 318-319.5 US, or Off.</dd>
 				<dt>Output</dt>
 				<dd>Conversion mode (Native/SI/Customary) controls server-side unit formatting. Verbosity (0&ndash;4) controls server debug output level.</dd>
 				<dt>Report Options</dt>
@@ -392,6 +438,10 @@
 				<dd>Show/hide microsecond-precision timestamps.</dd>
 			</dl>
 			<p>UTC time is a server launch option (<code>-M utc</code>) and cannot be toggled at runtime.</p>
+			<dl class="help-dl">
+				<dt>Limits</dt>
+				<dd>Configurable buffer sizes persisted to localStorage: Monitor events per group (50&ndash;10000, default 500), max tracked devices (50&ndash;5000, default 500), device event history (20&ndash;2000, default 200), syslog entries (50&ndash;2000, default 200), and chart event dots (500&ndash;20000, default 5000). Changes take effect immediately.</dd>
+			</dl>
 		</section>
 		<section class="help-section">
 			<h2>Stats</h2>
@@ -403,6 +453,19 @@
 				<dt>Client Metrics</dt>
 				<dd>Browser-side performance data: memory usage, event counts, flush timing, peak batch sizes, and render durations.</dd>
 			</dl>
+		</section>
+		<section class="help-section">
+			<h2>Notifications</h2>
+			<p>Toast notifications appear in the bottom-right corner for all server interactions:</p>
+			<dl class="help-dl">
+				<dt>Success (green)</dt>
+				<dd>Confirms applied settings, protocol toggles, and reconnection. Auto-dismisses after 4 seconds.</dd>
+				<dt>Error (red)</dt>
+				<dd>Shows server error messages (e.g. invalid frequency, protocol not found). Auto-dismisses after 6 seconds.</dd>
+				<dt>Warning (orange)</dt>
+				<dd>Client-side validation failures (empty input, invalid format). Auto-dismisses after 5 seconds.</dd>
+			</dl>
+			<p>Click any toast to dismiss it immediately. Up to 5 toasts are visible at once.</p>
 		</section>
 		<section class="help-section">
 			<h2>Connection</h2>
@@ -510,6 +573,8 @@
 	<div id="dev-bar" class="bar">
 		<input id="dev-search" class="filter-input" type="text" placeholder="Filter devices..." title="Filter devices (D)">
 		<span id="dev-count">0 devices</span>
+		<span id="dev-evt-count">0 events</span>
+		<span id="dev-rate" title="Events per second">0.0 evt/s</span>
 		<label class="dev-history-lbl" title="Chart history length">History
 			<select id="dev-history">
 				<option value="300">5 min</option>
@@ -519,6 +584,7 @@
 			</select>
 		</label>
 		<button id="dev-zoom-reset" class="btn-sm" title="Reset chart zoom to default">Zoom Reset</button>
+		<button id="dev-collapse-all" class="btn-sm" title="Collapse or expand all device groups">Expand All</button>
 		<button id="mon-pause" class="btn-sm" title="Pause/Resume (Space)">Pause</button>
 		<button id="mon-clear" class="btn-sm">Clear</button>
 		<button id="dev-export" class="btn-sm">Export CSV</button>
@@ -616,6 +682,7 @@
 	</div>
 </div>
 
+<div id="toast-container"></div>
 <div id="dock-zone-hl" class="dock-zone-highlight"></div>
 <script src="/app.js"></script>
 </body>

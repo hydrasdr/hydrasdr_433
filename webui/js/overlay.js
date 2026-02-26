@@ -47,13 +47,13 @@ function initOverlays() {
 			btn: d.btn,
 			open: false,
 			x: -1,  /* -1 = use CSS default (right:16px) */
-			y: 80 + d.yOff,
+			y: OVERLAY_INIT_Y + d.yOff,
 			/* Dock fields */
 			docked: null,       /* null | 'left' | 'right' | 'bottom' */
 			dockedTab: null,    /* 'monitor' | 'devices' */
-			dockSize: 400,
-			dockMinSize: 200,
-			dockMaxRatio: 0.6,
+			dockSize: DOCK_DEFAULT_SIZE,
+			dockMinSize: DOCK_MIN_SIZE,
+			dockMaxRatio: DOCK_MAX_RATIO,
 			splitterEl: null,
 			wrapperEl: null
 		};
@@ -140,9 +140,9 @@ function openOverlay(name) {
 	clampOverlay(p);
 	/* Bring to front */
 	for (var n in overlayPanels) {
-		if (!overlayPanels[n].docked) overlayPanels[n].el.style.zIndex = 100;
+		if (!overlayPanels[n].docked) overlayPanels[n].el.style.zIndex = OVERLAY_Z_BASE;
 	}
-	p.el.style.zIndex = 101;
+	p.el.style.zIndex = OVERLAY_Z_TOP;
 	/* Mark tab button active */
 	if (p.btn) {
 		removeClass(p.btn, 'overlay-active');
@@ -158,7 +158,7 @@ function closeOverlay(name) {
 	if (p.docked) undockOverlay(name);
 	p.open = false;
 	p.el.classList.remove('overlay-open');
-	p.el.style.zIndex = 100;
+	p.el.style.zIndex = OVERLAY_Z_BASE;
 	/* Remove active from tab button */
 	if (p.btn) {
 		removeClass(p.btn, 'overlay-active');
@@ -232,9 +232,9 @@ function overlayDragStart(e, name) {
 	};
 	/* Bring to front */
 	for (var n in overlayPanels) {
-		if (!overlayPanels[n].docked) overlayPanels[n].el.style.zIndex = 100;
+		if (!overlayPanels[n].docked) overlayPanels[n].el.style.zIndex = OVERLAY_Z_BASE;
 	}
-	p.el.style.zIndex = 101;
+	p.el.style.zIndex = OVERLAY_Z_TOP;
 	e.preventDefault();
 }
 
@@ -248,7 +248,7 @@ function overlayDragMove(e) {
 	if (!p) return;
 
 	/* If currently docked and drag distance exceeds 20px, undock */
-	if (overlayDrag.wasDocked && p.docked && dist > 20) {
+	if (overlayDrag.wasDocked && p.docked && dist > UNDOCK_DRAG_PX) {
 		var rect = p.el.getBoundingClientRect();
 		undockOverlay(overlayDrag.name);
 		p.x = rect.left;
@@ -512,7 +512,7 @@ function initChartResizeHandles() {
 	document.addEventListener('mousemove', function (e) {
 		if (!chartResizeDrag) return;
 		var dy = e.clientY - chartResizeDrag.startY;
-		var newH = Math.max(60, Math.min(600, chartResizeDrag.startHeight + dy));
+		var newH = Math.max(CHART_MIN_H, Math.min(CHART_MAX_H, chartResizeDrag.startHeight + dy));
 		chartResizeDrag.wrapEl.style.height = newH + 'px';
 		chartResizeDrag.wrapEl.style.minHeight = newH + 'px';
 		chartDirty = true;
@@ -536,7 +536,7 @@ function initChartResizeHandles() {
 /* ---- Window resize handler ---- */
 function handleWindowResize() {
 	/* Auto-undock on mobile */
-	if (window.innerWidth <= 700) {
+	if (window.innerWidth <= MOBILE_BP_PX) {
 		for (var n in overlayPanels) {
 			if (overlayPanels[n].docked) undockOverlay(n);
 		}

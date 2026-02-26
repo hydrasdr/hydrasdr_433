@@ -665,8 +665,57 @@ static void rpc_exec(rpc_t *rpc, r_cfg_t *cfg)
         rpc->response(rpc, 0, "Ok", 0);
     }
     else if (!strcmp(rpc->method, "protocol")) {
-        // set_protocol(rpc->val);
-        rpc->response(rpc, 0, "Ok", 0);
+        if (!rpc->arg || !*rpc->arg) {
+            rpc->response(rpc, -1, "Missing arg (enable/disable)", 0);
+        }
+        else if (!strcmp(rpc->arg, "enable")) {
+            int num = (int)rpc->val;
+            /* Find protocol template by number */
+            r_device *tmpl = NULL;
+            for (int i = 0; i < cfg->num_r_devices; ++i) {
+                if (cfg->devices[i].protocol_num == num) {
+                    tmpl = &cfg->devices[i];
+                    break;
+                }
+            }
+            if (!tmpl) {
+                rpc->response(rpc, -1, "Protocol not found", 0);
+            }
+            else {
+                /* Check if already active */
+                int already = 0;
+                for (void **iter = cfg->demod->r_devs.elems; iter && *iter; ++iter) {
+                    r_device *p = *iter;
+                    if (p->protocol_num == num) { already = 1; break; }
+                }
+                if (already) {
+                    rpc->response(rpc, -1, "Already enabled", 0);
+                }
+                else {
+                    register_protocol(cfg, tmpl, NULL);
+                    rpc->response(rpc, 0, "Ok", 0);
+                }
+            }
+        }
+        else if (!strcmp(rpc->arg, "disable")) {
+            int num = (int)rpc->val;
+            /* Find active protocol instance by number */
+            r_device *found = NULL;
+            for (void **iter = cfg->demod->r_devs.elems; iter && *iter; ++iter) {
+                r_device *p = *iter;
+                if (p->protocol_num == num) { found = p; break; }
+            }
+            if (!found) {
+                rpc->response(rpc, -1, "Protocol not active", 0);
+            }
+            else {
+                unregister_protocol(cfg, found);
+                rpc->response(rpc, 0, "Ok", 0);
+            }
+        }
+        else {
+            rpc->response(rpc, -1, "Invalid arg (use enable/disable)", 0);
+        }
     }
 
     // Apply

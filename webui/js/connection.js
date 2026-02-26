@@ -36,13 +36,16 @@ function calcRate() {
 
 function updateRateDisplay() {
 	var rate = calcRate();
-	elMonRate.textContent = rate.toFixed(1) + ' evt/s';
+	if (rate > perfMetrics.peakEventRate) perfMetrics.peakEventRate = rate;
+	var s = rate.toFixed(1) + ' evt/s';
+	elMonRate.textContent = s;
+	elDevRate.textContent = s;
 }
 
 /* Start rate display timer (updates every 500ms) */
 function startRateTimer() {
 	if (rateTimerId) return;
-	rateTimerId = setInterval(updateRateDisplay, 500);
+	rateTimerId = setInterval(updateRateDisplay, RATE_DISPLAY_MS);
 }
 
 /* SDR broadcast keys — hoisted to avoid per-message recreation */
@@ -55,10 +58,11 @@ function rpcDequeue() {
 	var cb = rpcQueue[rpcQueueHead];
 	rpcQueue[rpcQueueHead++] = null;  /* release reference */
 	/* Compact when half consumed */
-	if (rpcQueueHead > 16 && rpcQueueHead > rpcQueue.length / 2) {
+	if (rpcQueueHead > RPC_COMPACT_THRESH && rpcQueueHead > rpcQueue.length / 2) {
 		rpcQueue = rpcQueue.slice(rpcQueueHead);
 		rpcQueueHead = 0;
 	}
+	perfMetrics.rpcQueueDepth = rpcQueue.length - rpcQueueHead;
 	return cb;
 }
 
@@ -69,6 +73,7 @@ function connect() {
 	setStatus('wait', 'connecting');
 
 	ws.onopen = function () {
+		if (reconnectCount > 0) showToast('Reconnected', 'ok');
 		setStatus('on', 'connected');
 		reconnectDelay = RECONNECT_BASE_MS;
 		reconnectCount = 0;
@@ -79,12 +84,19 @@ function connect() {
 		/* Delay queries so auto-sent data (meta + history) arrives
 		   while rpcQueue is empty. History can contain state messages
 		   (no model key) that would be mis-consumed as RPC responses. */
-		setTimeout(queryInitialState, 150);
+		setTimeout(queryInitialState, INIT_QUERY_DELAY_MS);
 	};
 
 	ws.onmessage = function (e) {
 		var msg;
-		try { msg = JSON.parse(e.data); } catch (err) { return; }
+		var pt0 = performance.now();
+		try { msg = JSON.parse(e.data); } catch (err) {
+			console.warn('[ws] JSON parse error:', err.message);
+			return;
+		}
+		var pms = performance.now() - pt0;
+		perfMetrics.lastMsgParseMs = pms;
+		if (pms > perfMetrics.peakMsgParseMs) perfMetrics.peakMsgParseMs = pms;
 
 		/* Shutdown */
 		if (msg.shutdown) {
@@ -110,6 +122,10 @@ function connect() {
 			/* If paused, buffer — replayed on resume (nothing lost) */
 			if (paused) {
 				pausedEvents.push(msg);
+				/* Cap paused buffer: discard oldest to prevent unbounded growth */
+				if (pausedEvents.length > MAX_PAUSED_EVENTS) {
+					pausedEvents = pausedEvents.slice(-MAX_PAUSED_EVENTS);
+				}
 				return;
 			}
 
@@ -191,6 +207,7 @@ function connect() {
 	ws.onclose = function () {
 		ws = null;
 		setStatus('off', 'disconnected');
+		showToast('Connection lost', 'err');
 		scheduleReconnect();
 	};
 
@@ -201,6 +218,7 @@ function connect() {
 
 function scheduleReconnect() {
 	reconnectCount++;
+	perfMetrics.wsReconnects++;
 	setStatus('wait', 'reconnecting (' + reconnectCount + ')');
 	setTimeout(function () {
 		reconnectDelay = Math.min(reconnectDelay * 1.5, RECONNECT_MAX_MS);
@@ -221,7 +239,12 @@ function rpc(method, args, cb) {
 		if (args.arg !== undefined) msg.arg = args.arg;
 		if (args.val !== undefined) msg.val = args.val;
 	}
-	if (cb) rpcQueue.push(cb);
+	if (cb) {
+		rpcQueue.push(cb);
+		var depth = rpcQueue.length - rpcQueueHead;
+		perfMetrics.rpcQueueDepth = depth;
+		if (depth > perfMetrics.peakRpcQueueDepth) perfMetrics.peakRpcQueueDepth = depth;
+	}
 	ws.send(JSON.stringify(msg));
 }
 
@@ -229,6 +252,17 @@ function rpc(method, args, cb) {
 function queryInitialState() {
 	rpc('get_dev_info', null, function (r) {
 		if (r && typeof r === 'object') {
+			if (r.linearity_gain) {
+				var lg = r.linearity_gain;
+				gainRanges.linearity = {min: lg.min || 0, max: lg.max || 0,
+					step: lg.step || 1, def: lg['default'] || 0};
+			}
+			if (r.sensitivity_gain) {
+				var sg = r.sensitivity_gain;
+				gainRanges.sensitivity = {min: sg.min || 0, max: sg.max || 0,
+					step: sg.step || 1, def: sg['default'] || 0};
+			}
+			applyGainInputRange();
 			var parts = [];
 			for (var k in r) {
 				if (r.hasOwnProperty(k)) parts.push(k + ': ' + r[k]);
@@ -260,17 +294,24 @@ function queryInitialState() {
 				var parts = s.split('=');
 				selectGainMode(parts[0]);
 				$('s-gain').value = parts[1];
+				hdrGainStr = parts[0].charAt(0).toUpperCase() + parts[0].slice(1) + ' ' + parts[1];
 			} else {
 				selectGainMode('auto');
 				$('s-gain').value = (s === '0' || s === '') ? '' : s;
+				hdrGainStr = 'AGC Auto';
 			}
+			updateHeaderFromMeta(metaCache);
 		}
 	});
 	rpc('get_ppm_error', null, function (r) {
 		if (r !== null) $('s-ppm').value = r;
 	});
 	rpc('get_hop_interval', null, function (r) {
-		if (r !== null) $('s-hop').value = r;
+		if (r !== null) {
+			$('s-hop').value = r;
+			hdrHopInterval = parseInt(r, 10) || 0;
+			updateHeaderFromMeta(metaCache);
+		}
 	});
 	rpc('get_conversion_mode', null, function (r) {
 		if (r !== null) $('s-convert').value = r;

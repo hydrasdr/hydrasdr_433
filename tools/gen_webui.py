@@ -15,6 +15,12 @@ import gzip
 import os
 import sys
 
+# Use vendored rjsmin/rcssmin (Apache 2.0, https://github.com/ndparker)
+# for proven JS/CSS minification — no pip install needed.
+sys.path.insert(0, os.path.dirname(__file__))
+from rjsmin import jsmin as _rjsmin
+from rcssmin import cssmin as _rcssmin
+
 WEBUI_DIR = os.path.join(os.path.dirname(__file__), '..', 'webui')
 OUTPUT = os.path.join(os.path.dirname(__file__), '..', 'src', 'webui_assets.h')
 
@@ -24,12 +30,15 @@ JS_MODULES = [
 	'js/format.js',
 	'js/connection.js',
 	'js/settings.js',
+	'js/system.js',
 	'js/overlay.js',
 	'js/groups.js',
 	'js/chart.js',
 	'js/monitor.js',
 	'js/devices.js',
-	'js/panels.js',
+	'js/protocols.js',
+	'js/stats.js',
+	'js/syslog.js',
 	'js/debug.js',
 	'js/init.js',
 ]
@@ -66,12 +75,25 @@ ASSETS = [
 ]
 
 
-def concat_js_modules(webui_dir):
+def minify_js(source):
+	"""Minify JS using rjsmin (Douglas Crockford's jsmin.c semantics).
+	Handles strings, regex literals, template literals, comments."""
+	return _rjsmin(source)
+
+
+def minify_css(source):
+	"""Minify CSS using rcssmin (YUI compressor semantics).
+	Handles strings, calc(), @media, @keyframes, CSS hacks."""
+	return _rcssmin(source)
+
+
+def concat_js_modules(webui_dir, minify=True):
 	"""Concatenate JS modules into a single IIFE string."""
 	parts = []
 	parts.append('(function () {')
 	parts.append("'use strict';")
 	total_lines = 0
+	total_raw = 0
 
 	for mod in JS_MODULES:
 		filepath = os.path.join(webui_dir, mod)
@@ -87,6 +109,7 @@ def concat_js_modules(webui_dir):
 		content = content.rstrip()
 		lines = content.count('\n') + 1
 		total_lines += lines
+		total_raw += len(content)
 		print('  %-20s %5d lines  %6d bytes' % (mod, lines, len(content)))
 
 		parts.append('')
@@ -100,6 +123,13 @@ def concat_js_modules(webui_dir):
 	blob = '\n'.join(parts)
 	print('  %-20s %5d lines  %6d bytes (concatenated)' % (
 		'TOTAL', total_lines, len(blob)))
+
+	if minify:
+		blob = minify_js(blob)
+		saving = total_raw - len(blob)
+		print('  %-20s %5d lines  %6d bytes (minified, -%d bytes)' % (
+			'MINIFIED', blob.count('\n'), len(blob), saving))
+
 	return blob
 
 
@@ -147,6 +177,13 @@ def main():
 
 			with open(filepath, 'rb') as f:
 				raw = f.read()
+
+		# Minify CSS
+		if asset['file'].endswith('.css'):
+			raw_size = len(raw)
+			raw = minify_css(raw.decode('utf-8')).encode('utf-8')
+			print('%s: %d bytes raw, %d bytes minified (-%d bytes)' % (
+				asset['file'], raw_size, len(raw), raw_size - len(raw)))
 
 		if asset['gzip']:
 			data = gzip.compress(raw, compresslevel=9)

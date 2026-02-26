@@ -102,10 +102,10 @@ function renderActivityChart(canvas, wrap) {
 	}
 
 	/* Layout constants */
-	var marginLeft = 30;   /* Y-axis label space */
-	var marginBottom = 14; /* X-axis label space */
-	var marginTop = 4;
-	var marginRight = 4;
+	var marginLeft = CHART_MARGIN_LEFT;
+	var marginBottom = CHART_MARGIN_BOTTOM;
+	var marginTop = CHART_MARGIN_TOP;
+	var marginRight = CHART_MARGIN_RIGHT;
 	var plotW = w - marginLeft - marginRight;
 	var plotH = h - marginTop - marginBottom;
 	var dot = CHART_DOT_SIZE;
@@ -153,13 +153,16 @@ function renderActivityChart(canvas, wrap) {
 	p.laneArea = plotH - 2 * p.laneMargin;
 	p.laneStep = p.noDbCount > 1 ? p.laneArea / (p.noDbCount - 1) : 0;
 
-	/* Pre-compute Y coords for visible events — eliminates duplicate
-	   chartEventY() calls in drawChartSessions + drawChartDots */
+	/* Pre-compute Y coords for visible events in a parallel array.
+	   Avoids mutating chartEvents[] data objects with rendering state.
+	   Indexed by [eventIndex - iStart] for O(1) lookup. */
+	var cyArr = new Array(iEnd - iStart);
 	for (var yi = iStart; yi < iEnd; yi++) {
-		chartEvents[yi]._cy = chartEventY(chartEvents[yi], marginTop, plotH,
+		cyArr[yi - iStart] = chartEventY(chartEvents[yi], marginTop, plotH,
 			dbMin, dbMax, p.noDbModels, p.noDbCount,
 			p.laneMargin, p.laneStep, p.laneArea);
 	}
+	p.cyArr = cyArr;
 
 	drawChartGrid(p);
 	drawChartSessions(p);
@@ -178,7 +181,7 @@ function drawChartGrid(p) {
 	/* Y-axis grid */
 	ctx.textAlign = 'right';
 	ctx.textBaseline = 'middle';
-	var dbStep = 6;
+	var dbStep = CHART_DB_STEP;
 	for (var dbv = p.dbMin; dbv <= p.dbMax; dbv += dbStep) {
 		var yy = Math.round(p.marginTop + p.plotH - ((dbv - p.dbMin) / (p.dbMax - p.dbMin)) * p.plotH) + 0.5;
 		ctx.beginPath();
@@ -192,7 +195,7 @@ function drawChartGrid(p) {
 	ctx.textAlign = 'center';
 	ctx.textBaseline = 'top';
 	var pxPerMs = p.plotW / (p.tMax - p.tMin);
-	var targetMs = 80 / pxPerMs;
+	var targetMs = CHART_LABEL_SPACING_PX / pxPerMs;
 	var GRID_STEPS = [
 		1, 2, 5, 10, 20, 50, 100, 200, 500,
 		1000, 2000, 5000, 10000, 15000, 30000,
@@ -254,18 +257,21 @@ function drawChartGrid(p) {
 
 function drawChartSessions(p) {
 	var ctx = p.ctx;
+	var cyArr = p.cyArr;
 	var sessionsByKey = {};
 	for (var si2 = p.iStart; si2 < p.iEnd; si2++) {
 		var sev = chartEvents[si2];
 		var sKey = sev.model + '::' + sev.id;
 		if (!sessionsByKey[sKey]) sessionsByKey[sKey] = [];
 		var sList = sessionsByKey[sKey];
-		var isNewSession = sList.length === 0
+		var lastSess = sList.length > 0 ? sList[sList.length - 1] : null;
+		var lastItem = lastSess && lastSess.length > 0 ? lastSess[lastSess.length - 1].ev : null;
+		var isNewSession = !lastSess
 			|| sev.flagStart === 1
-			|| (sList[sList.length - 1].length > 0 && sList[sList.length - 1][sList[sList.length - 1].length - 1].flagEnd === 1)
-			|| (sev.ts - sList[sList.length - 1][sList[sList.length - 1].length - 1].ts > CHART_SESSION_GAP_MS);
+			|| (lastItem && lastItem.flagEnd === 1)
+			|| (lastItem && sev.ts - lastItem.ts > CHART_SESSION_GAP_MS);
 		if (isNewSession) sList.push([]);
-		sList[sList.length - 1].push(sev);
+		sList[sList.length - 1].push({ev: sev, cy: cyArr[si2 - p.iStart]});
 	}
 
 	var bracketY = p.marginTop + p.plotH;
@@ -276,16 +282,16 @@ function drawChartSessions(p) {
 		for (var bs = 0; bs < sessions.length; bs++) {
 			var sess = sessions[bs];
 			if (sess.length === 0) continue;
-			var bColor = sess[0].model ? modelColor(sess[0].model) : '#6a9955';
-			var bx1 = Math.round(p.marginLeft + (sess[0].ts - p.tMin) * p.pxPerMs);
+			var bColor = sess[0].ev.model ? modelColor(sess[0].ev.model) : '#6a9955';
+			var bx1 = Math.round(p.marginLeft + (sess[0].ev.ts - p.tMin) * p.pxPerMs);
 			var bx2 = (sess.length > 1)
-				? Math.round(p.marginLeft + (sess[sess.length - 1].ts - p.tMin) * p.pxPerMs)
+				? Math.round(p.marginLeft + (sess[sess.length - 1].ev.ts - p.tMin) * p.pxPerMs)
 				: bx1;
 
 			if (sess.length >= 2) {
 				var byMin = 9999, byMax = -9999;
 				for (var be = 0; be < sess.length; be++) {
-					var by = sess[be]._cy;
+					var by = sess[be].cy;
 					if (by < byMin) byMin = by;
 					if (by > byMax) byMax = by;
 				}
@@ -331,11 +337,12 @@ function drawChartSessions(p) {
 
 function drawChartDots(p) {
 	var ctx = p.ctx;
+	var cyArr = p.cyArr;
 	ctx.globalAlpha = 0.7;
 	for (var ei = p.iStart; ei < p.iEnd; ei++) {
 		var ev = chartEvents[ei];
 		var ex = Math.round(p.marginLeft + (ev.ts - p.tMin) * p.pxPerMs);
-		var ey = ev._cy;
+		var ey = cyArr[ei - p.iStart];
 		ctx.fillStyle = ev.model ? modelColor(ev.model) : '#6a9955';
 		ctx.fillRect(ex - 1, ey - 1, p.dot, p.dot);
 	}
@@ -433,9 +440,9 @@ function syncScrollbars() {
 	var oldest = chartEvents.length > 0 ? chartEvents[0].ts : nowMs;
 	var range = nowMs - oldest;
 	if (range < 1000) range = 1000;
-	/* Scrollbar value: 0 = oldest, 1000 = live (now) */
-	var val = Math.round(((nowMs - chartPanOffsetMs) - oldest) / range * 1000);
-	val = Math.max(0, Math.min(1000, val));
+	/* Scrollbar value: 0 = oldest, CHART_SCROLL_MAX = live (now) */
+	var val = Math.round(((nowMs - chartPanOffsetMs) - oldest) / range * CHART_SCROLL_MAX);
+	val = Math.max(0, Math.min(CHART_SCROLL_MAX, val));
 	elMonChartScroll.value = val;
 	elDevChartScroll.value = val;
 }
@@ -443,7 +450,7 @@ function syncScrollbars() {
 /* Start/stop chart redraw timer (redraws every second) */
 function startChartTimer() {
 	if (chartTimerId) return;
-	chartTimerId = setInterval(renderAllCharts, 1000);
+	chartTimerId = setInterval(renderAllCharts, CHART_REDRAW_MS);
 }
 
 /* ---- Chart zoom via mouse wheel (both charts) ---- */
@@ -455,7 +462,7 @@ function chartWheelHandler(e) {
 	var wrap = canvas.parentNode;
 	var rect = canvas.getBoundingClientRect();
 	var mx = e.clientX - rect.left;
-	var marginLeft = 30, marginRight = 4;
+	var marginLeft = CHART_MARGIN_LEFT, marginRight = CHART_MARGIN_RIGHT;
 	var plotW = wrap.clientWidth - marginLeft - marginRight;
 	var windowMs = chartWindowSec * 1000;
 	var nowMs = chartFreezeNow();
@@ -495,7 +502,7 @@ function chartDragHelper(canvas, wrap) {
 			/* Shift+drag: rubber-band zoom selection */
 			var rect = canvas.getBoundingClientRect();
 			var mx = e.clientX - rect.left;
-			var marginLeft = 30, marginRight = 4;
+			var marginLeft = CHART_MARGIN_LEFT, marginRight = CHART_MARGIN_RIGHT;
 			var plotW = wrap.clientWidth - marginLeft - marginRight;
 			var windowMs = chartWindowSec * 1000;
 			chartFrozenNowMs = chartFreezeNow();
@@ -527,9 +534,9 @@ function chartDragHelper(canvas, wrap) {
 		e.preventDefault();
 		var dx = e.clientX - chartDragStartX;
 		/* Convert pixel delta to time delta */
-		var plotW = wrap.clientWidth - 34;  /* marginLeft(30) + marginRight(4) */
+		var plotW = wrap.clientWidth - (CHART_MARGIN_LEFT + CHART_MARGIN_RIGHT);
 		var msPerPx = (chartWindowSec * 1000) / plotW;
-		/* Drag right = pan forward (decrease offset), drag left = pan backward */
+		/* Drag right = pan backward (increase offset), drag left = pan forward */
 		var newOffset = chartDragStartOffset + dx * msPerPx;
 		chartPanOffsetMs = Math.max(0, newOffset);
 		chartDirty = true;
@@ -539,7 +546,7 @@ function chartDragHelper(canvas, wrap) {
 		if (chartZoomSel && chartZoomSel.canvas === canvas) {
 			var rect = canvas.getBoundingClientRect();
 			var endX = e.clientX - rect.left;
-			var marginLeft = 30, marginRight = 4;
+			var marginLeft = CHART_MARGIN_LEFT, marginRight = CHART_MARGIN_RIGHT;
 			var plotW = wrap.clientWidth - marginLeft - marginRight;
 			var windowMs = chartWindowSec * 1000;
 			var tMax = chartFrozenNowMs - chartPanOffsetMs;
@@ -549,12 +556,21 @@ function chartDragHelper(canvas, wrap) {
 			var selMinMs = Math.min(chartZoomSel.startMs, endMs);
 			var selMaxMs = Math.max(chartZoomSel.startMs, endMs);
 			var selDurSec = (selMaxMs - selMinMs) / 1000;
-			chartFrozenNowMs = 0;
-			if (selPx > 5 && selDurSec >= CHART_ZOOM_MIN) {
-				chartWindowSec = Math.max(CHART_ZOOM_MIN, Math.min(CHART_ZOOM_MAX, selDurSec));
+			var newWindowSec = Math.max(CHART_ZOOM_MIN, Math.min(CHART_ZOOM_MAX, selDurSec));
+			if (selPx > CHART_MIN_ZOOM_SEL_PX && newWindowSec < chartWindowSec) {
+				/* Zoom in: selection is narrower than current view */
+				chartWindowSec = newWindowSec;
 				var selCenter = (selMinMs + selMaxMs) / 2;
 				var realNow = Date.now();
 				chartPanOffsetMs = Math.max(0, realNow - selCenter - (chartWindowSec * 500));
+				chartFrozenNowMs = 0;
+			} else {
+				/* No zoom change (already at max, or selection too small) —
+				   adjust pan offset for elapsed time to prevent view jump */
+				if (chartFrozenNowMs) {
+					chartPanOffsetMs = Math.max(0, chartPanOffsetMs + (Date.now() - chartFrozenNowMs));
+					chartFrozenNowMs = 0;
+				}
 			}
 			chartZoomSel = null;
 			canvas.style.cursor = '';
@@ -604,14 +620,14 @@ function handleChartScroll() {
 	var val = +this.value;
 	var nowMs = chartFreezeNow();
 	chartFrozenNowMs = nowMs;
-	if (val >= 998) {
+	if (val >= CHART_SCROLL_SNAP) {
 		/* Snap to live */
 		chartPanOffsetMs = 0;
 	} else {
 		var oldest = chartEvents.length > 0 ? chartEvents[0].ts : nowMs;
 		var range = nowMs - oldest;
 		if (range < 1000) range = 1000;
-		var tMaxScroll = oldest + (val / 1000) * range;
+		var tMaxScroll = oldest + (val / CHART_SCROLL_MAX) * range;
 		chartPanOffsetMs = Math.max(0, nowMs - tMaxScroll);
 	}
 	chartDirty = true;
@@ -634,7 +650,7 @@ elDevHistory.addEventListener('change', function () {
 	var sec = parseInt(this.value, 10);
 	CHART_WINDOW_SEC = sec;
 	CHART_ZOOM_MAX = Math.max(sec, 3600);
-	CHART_MAX_EVENTS = Math.max(2000, Math.round(sec * 7));
+	CHART_MAX_EVENTS = Math.max(2000, Math.round(sec * CHART_EST_EVENTS_PER_SEC));
 	chartWindowSec = sec;
 	/* Trim chartEvents to new max — single splice is O(n) */
 	var excess = chartEvents.length - CHART_MAX_EVENTS;

@@ -90,6 +90,7 @@ document.addEventListener('keydown', function (e) {
 /* ---- Visibility change: flush deferred events when tab becomes visible ---- */
 document.addEventListener('visibilitychange', function () {
 	if (!document.hidden && hiddenBatch.length > 0) {
+		perfMetrics.hiddenFlushes++;
 		var buf = hiddenBatch;
 		hiddenBatch = [];
 		for (var i = 0; i < buf.length; i++) pendingEvents.push(buf[i]);

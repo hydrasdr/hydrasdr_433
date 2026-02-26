@@ -28,7 +28,9 @@ jobs:
       - name: Extract version
         id: version
         run: |
-          VERSION=$(git describe --tags --exclude=nightly 2>/dev/null || echo "25.12.2-g$(git rev-parse --short HEAD)")
+          # Fallback version from CMakeLists.txt (single source of truth)
+          FALLBACK=$(sed -n 's/^set(HYDRASDR_FALLBACK_VERSION "\(.*\)")/\1/p' CMakeLists.txt)
+          VERSION=$(git describe --tags --exclude=nightly 2>/dev/null || echo "${FALLBACK}-g$(git rev-parse --short HEAD)")
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
             echo "is_release=true" >> "$GITHUB_OUTPUT"
@@ -652,43 +654,13 @@ jobs:
 
       - name: Generate nightly release notes
         run: |
-          cat > RELEASEINFO.md <<'NOTES_EOF'
-          ## Nightly Build
-
-          **Automated build from `master` branch.**
-
-          Built from commit: ${{ github.sha }}
-          Version: ${{ needs.prepare.outputs.version }}
-
-          ### Platforms
-
-          | Platform | File |
-          |----------|------|
-          | Windows x64 | `hydrasdr_433-Windows-x64-*.zip` |
-          | macOS ARM64 (Apple Silicon) | `hydrasdr_433-macOS-ARM64-*.tar.gz` |
-          | macOS x86_64 (Intel) | `hydrasdr_433-macOS-x86_64-*.tar.gz` |
-          | Ubuntu 24.04 / 22.04 | `.deb` packages |
-          | Debian 13 / 12 / 11 | `.deb` packages |
-          | Linux Mint 22.1 / 22 / 21.3 | `.deb` packages |
-          | Fedora 42 / 41 | `.rpm` packages |
-          | AlmaLinux 9 | `.rpm` package |
-          | openSUSE Tumbleweed | `.rpm` package |
-          | Arch Linux | `.pkg.tar.zst` package |
-          | Linux ARM64 | `hydrasdr_433-Linux-ARM64-*.tar.gz` |
-
-          ### Install
-
-          **Windows:** Extract zip, run `hydrasdr_433.exe` from terminal.
-          **macOS:** Extract tar.gz, run `./hydrasdr_433`.
-          **Debian/Ubuntu/Mint:** `sudo dpkg -i hydrasdr-433_*.deb && sudo apt-get install -f`
-          **Fedora/AlmaLinux/openSUSE:** `sudo rpm -i hydrasdr-433-*.rpm`
-          **Arch Linux:** `sudo pacman -U hydrasdr-433-*.pkg.tar.zst`
-          **ARM64:** Extract tar.gz, run `./hydrasdr_433`.
-
-          ### Requirements
-          - HydraSDR hardware + libusb
-          - Optional: OpenSSL for TLS (MQTT/InfluxDB)
-          NOTES_EOF
+          SHORT_SHA=$(echo "${{ github.sha }}" | head -c 8)
+          REPO_URL="${{ github.server_url }}/${{ github.repository }}"
+          sed -e "s|%VERSION%|${{ needs.prepare.outputs.version }}|g" \
+              -e "s|%SHA%|${{ github.sha }}|g" \
+              -e "s|%SHORT_SHA%|${SHORT_SHA}|g" \
+              -e "s|%REPO_URL%|${REPO_URL}|g" \
+              .deploy/NIGHTLY_NOTES.md > RELEASEINFO.md
 
       - name: Delete existing nightly release
         env:

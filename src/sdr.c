@@ -881,11 +881,15 @@ static int sdr_open_hydrasdr(sdr_dev_t **out_dev, char const *dev_query, int ver
     /* Show device info */
     hydrasdr_show_device_info(ctx, verbose);
 
-    /* Build device info JSON string */
+    /* Build device info JSON string with gain ranges from device_info */
     const char *board_name = ctx->info.board_name[0] ? ctx->info.board_name : "unknown";
     const char *firmware_ver = ctx->info.firmware_version[0] ? ctx->info.firmware_version : "unknown";
     const char *lib_ver = HYDRASDR_VERSION;
-    size_t info_len = 256 + strlen(board_name) + strlen(firmware_ver) + strlen(lib_ver);
+    hydrasdr_gain_range_t *lr = &ctx->info.linearity_gain;
+    hydrasdr_gain_range_t *sr = &ctx->info.sensitivity_gain;
+    int lin_avail = hydrasdr_get_gain_max(ctx, HYDRASDR_GAIN_TYPE_LINEARITY) > 0;
+    int sens_avail = hydrasdr_get_gain_max(ctx, HYDRASDR_GAIN_TYPE_SENSITIVITY) > 0;
+    size_t info_len = 768 + strlen(board_name) + strlen(firmware_ver) + strlen(lib_ver);
     dev->dev_info = malloc(info_len);
     if (!dev->dev_info) {
         /* Non-critical: device info just won't be available */
@@ -893,8 +897,14 @@ static int sdr_open_hydrasdr(sdr_dev_t **out_dev, char const *dev_query, int ver
     else {
         snprintf(dev->dev_info, info_len,
                  "{\"vendor\":\"HydraSDR\", \"product\":\"%s\", \"firmware\":\"%s\","
-                 " \"libhydrasdr\":\"%s\", \"sample_format\":\"CF32\"}",
-                 board_name, firmware_ver, lib_ver);
+                 " \"libhydrasdr\":\"%s\", \"sample_format\":\"CF32\","
+                 " \"linearity_gain\":{\"min\":%d,\"max\":%d,\"step\":%d,\"default\":%d},"
+                 " \"sensitivity_gain\":{\"min\":%d,\"max\":%d,\"step\":%d,\"default\":%d}}",
+                 board_name, firmware_ver, lib_ver,
+                 lin_avail ? lr->min_value : 0, lin_avail ? lr->max_value : 0,
+                 lin_avail ? lr->step_value : 0, lin_avail ? lr->default_value : 0,
+                 sens_avail ? sr->min_value : 0, sens_avail ? sr->max_value : 0,
+                 sens_avail ? sr->step_value : 0, sens_avail ? sr->default_value : 0);
     }
 
     /* Store context pointer */
